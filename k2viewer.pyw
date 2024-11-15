@@ -744,9 +744,9 @@ class MainWindow(QMainWindow):
         conv = self.convmass(m,kda.c.dens)
         sheet.write(r,5, '{0:10.7f}'.format(kda.c.dens/1000))
         if conv>=995:
-            sheet.write(r,6, '{0:10.7f}'.format(m/1000))
+            sheet.write(r,6, '{0:10.7f}'.format(conv/1000))
         else:
-            sheet.write(r,6, '{0:10.9f}'.format(m/1000))
+            sheet.write(r,6, '{0:10.9f}'.format(conv/1000))
         sheet.write(r,7, '{0:8.4f}'.format(conv-nom*1000))
         unc =self.totuncabs
         sheet.write(r,8, '{0:6.4f}'.format(unc/1000))
