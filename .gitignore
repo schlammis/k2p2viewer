@@ -1,10 +1,28 @@
-/__pycache__
-/dist
-/build
-k2viewer.spec
-/.ipynb_checkpoints
-k2viewer.dbg
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+/dist/
+/build/
+*.spec
 *.exe
-k2viewer.db
+*.dbg
+
+# Database and local data
+*.db
+templ.xls
+
+# User-specific / IDE files
+.ipynb_checkpoints/
+.vscode/
+.idea/
 Thumbs.db
 /%SYSTEMROOT%
+
+# Project specific
+k2p2viewer.db
