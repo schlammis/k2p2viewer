@@ -370,7 +370,10 @@ class MyConfig:
         self.bd0=bd0
         self.config = configparser.ConfigParser()
         self.config.read(os.path.join(bd0,'config.ini'))
-        verstr= self.config['Measurement']['SoftwareVersion']
+        try:
+            verstr= self.config['Measurement']['SoftwareVersion']   
+        except:
+            print(self.bd0)
         self.ver=1
         if verstr.startswith('"'):
             verstr = self.trim(verstr)
