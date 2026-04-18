@@ -1,4 +1,5 @@
 import os,sys
+from appconfig import AppConfig
 import traceback
 import ctypes
 import xlwt,xlrd,xlutils.copy
@@ -118,7 +119,7 @@ class MainWindow(QMainWindow):
 
         
         self.setWindowIcon(QIcon('k2viewer.png'))
-        self.bd='..\DATA'
+        self.bd = AppConfig().datapath
         self.idle=True
         self.statust=time.time()
 

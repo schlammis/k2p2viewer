@@ -368,7 +368,6 @@ class MyConfig:
         
     def setbd0(self,bd0):
         self.bd0=bd0
-        print(bd0)
         self.config = configparser.ConfigParser()
         self.config.read(os.path.join(bd0,'config.ini'))
         try:
