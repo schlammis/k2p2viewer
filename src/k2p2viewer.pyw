@@ -338,34 +338,37 @@ class MainWindow(QMainWindow):
                                           if f.is_dir() ],reverse=True):
                             if os.path.isfile(os.path.join(s3,'config.ini'))==False:
                                 continue
-                            c.setbd0(s3)
-                            letter=os.path.split(s3)[-1]
-                            if len(letter)==1:
-                                run =yymm+day+letter
-                                row_number = self.mytable.rowCount()
-                                self.mytable.insertRow(row_number)
-                                self.mytable.setItem(row_number,0,\
-                                 QTableWidgetItem(str(run)))
-                                self.mytable.setItem(row_number,1,QTableWidgetItem(str(c.title)))
-                                dbentry = cursor.execute("""SELECT run,value,
-                                uncertainty,title FROM k2data 
-                                WHERE run="{0}";""".format(run)).fetchall()
-                                if len(dbentry)==0:
-                                    continue
-                                dbentry=dbentry[0]
-                                if dbentry[1]>-9e96:
-                                    nitem =QTableWidgetItem('{0:,.4f}'.format(dbentry[1]) )
-                                else:
-                                    nitem =QTableWidgetItem('n/a')
-                                nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
-                                self.mytable.setItem(row_number,2,nitem)
-                                if dbentry[2]>-9e96:
-                                    nitem =QTableWidgetItem('{0:6.4f}'.format(dbentry[2]))
-                                else:
-                                    nitem =QTableWidgetItem('n/a')                                
-                                nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
-                                self.mytable.setItem(row_number,3,nitem)
-                                #self.mytable.setItem(row_number,4,QTableWidgetItem(dbentry[3]))
+                            try:
+                                c.setbd0(s3)
+                                letter=os.path.split(s3)[-1]
+                                if len(letter)==1:
+                                    run =yymm+day+letter
+                                    row_number = self.mytable.rowCount()
+                                    self.mytable.insertRow(row_number)
+                                    self.mytable.setItem(row_number,0,\
+                                    QTableWidgetItem(str(run)))
+                                    self.mytable.setItem(row_number,1,QTableWidgetItem(str(c.title)))
+                                    dbentry = cursor.execute("""SELECT run,value,
+                                    uncertainty,title FROM k2data 
+                                    WHERE run="{0}";""".format(run)).fetchall()
+                                    if len(dbentry)==0:
+                                        continue
+                                    dbentry=dbentry[0]
+                                    if dbentry[1]>-9e96:
+                                        nitem =QTableWidgetItem('{0:,.4f}'.format(dbentry[1]) )
+                                    else:
+                                        nitem =QTableWidgetItem('n/a')
+                                    nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
+                                    self.mytable.setItem(row_number,2,nitem)
+                                    if dbentry[2]>-9e96:
+                                        nitem =QTableWidgetItem('{0:6.4f}'.format(dbentry[2]))
+                                    else:
+                                        nitem =QTableWidgetItem('n/a')                                
+                                    nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
+                                    self.mytable.setItem(row_number,3,nitem)
+                                    #self.mytable.setItem(row_number,4,QTableWidgetItem(dbentry[3]))
+                            except:
+                                print('Problem reading ',s3)
 
          connection.close()
          
