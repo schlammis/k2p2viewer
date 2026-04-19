@@ -15,10 +15,11 @@ from shutil import copyfile
 from PyQt5.QtCore import (
     Qt,
     QSize,
-    QMutex, 
-    QObject, 
-    QThread, 
-    pyqtSignal, 
+    QMutex,
+    QObject,
+    QThread,
+    QTimer,
+    pyqtSignal,
     pyqtSlot )
 
 from PyQt5.QtGui import QFont,QIcon
@@ -41,7 +42,8 @@ from PyQt5.QtWidgets import (
     QSpinBox,
     QDoubleSpinBox,
     QAbstractSpinBox,
-    QProgressBar
+    QProgressBar,
+    QPlainTextEdit
 )
 import mplwidget
 import numpy as np
@@ -50,7 +52,7 @@ import sqlite3
 import k2dataset
 import k2tools
 try:
-       import pyi_splash
+       import pyi_splash  # type: ignore
        pyi_splash.update_text('UI Loaded ...')
        pyi_splash.close()
 except:
@@ -61,6 +63,26 @@ kda =   k2dataset.k2Set(mutex)
 kda.setcoverage(2) 
 kda.clear()
 
+
+
+class DiagStream(QObject):
+    newText = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self._buf = ''
+
+    def write(self, text):
+        self._buf += text
+        while '\n' in self._buf:
+            line, self._buf = self._buf.split('\n', 1)
+            if line:
+                self.newText.emit(line)
+
+    def flush(self):
+        if self._buf.strip():
+            self.newText.emit(self._buf)
+            self._buf = ''
 
 
 class Worker(QObject):
@@ -120,12 +142,13 @@ class MainWindow(QMainWindow):
         
         self.setWindowIcon(QIcon('k2viewer.png'))
         self.bd = AppConfig().datapath
+        print(self.bd)
         self.idle=True
         self.statust=time.time()
 
         self.thread = QThread()
         self.setWindowTitle("Kibb-g2 Viewer")
-        self.setFixedSize(QSize(1300, 600))
+        self.setMinimumSize(QSize(1300, 600))
         
         self.mytable = QTableWidget(2,4)
         self.mytable.setHorizontalHeaderItem(0,\
@@ -259,6 +282,10 @@ class MainWindow(QMainWindow):
         
         self.statusBar.showMessage('Welcome to k2viewer',5000)
 
+        self.diagStream = DiagStream()
+        self.diagStream.newText.connect(self.appendDiag)
+        sys.stdout = self.diagStream
+
         layout   = QVBoxLayout()
         hlayout  = QHBoxLayout()
         hlayout2  = QHBoxLayout()
@@ -292,7 +319,7 @@ class MainWindow(QMainWindow):
         hlayout2.addItem(hSpacer)
      
         self.setCentralWidget(widget)
-        self.loadTable()
+        QTimer.singleShot(0, self.loadTable)
 
         self.mytable.clicked.connect(self.on_table_clicked)
         self.Brefresh.clicked.connect(self.loadTable)
@@ -304,6 +331,11 @@ class MainWindow(QMainWindow):
         self.sbOrder.valueChanged.connect(self.recalcvelo)
         self.sbMass.valueChanged.connect(self.gotmassval)
         
+
+    def appendDiag(self, text):
+        self.tabWidget.diagText.appendPlainText(text)
+        self.tabWidget.diagText.verticalScrollBar().setValue(
+            self.tabWidget.diagText.verticalScrollBar().maximum())
 
     def createdb(self):
         connection = sqlite3.connect('k2viewer.db')
@@ -582,6 +614,8 @@ class MainWindow(QMainWindow):
         self.mplprofile.canvas.draw() 
         
     def populateUnc(self):
+        if kda.Mass==0:
+            return
         mean = kda.Mass.avemass
         sig  =  kda.Mass.uncmass
         self.Uncdict['Balance mechanics']=1e-3/mean*1e6
@@ -1071,13 +1105,21 @@ class MyTabWidget(QWidget):
         # Add tabs to widget 
         self.layout.addWidget(self.tabs) 
         self.setLayout(self.layout) 
-        self.tabs.addTab(self.tabMass, "Mass") 
-        self.tabs.addTab(self.tabForce, "Force") 
-        self.tabs.addTab(self.tabEnv, "Environmentals") 
-        self.tabs.addTab(self.tabVelo, "Velocity") 
+        self.tabs.addTab(self.tabMass, "Mass")
+        self.tabs.addTab(self.tabForce, "Force")
+        self.tabs.addTab(self.tabEnv, "Environmentals")
+        self.tabs.addTab(self.tabVelo, "Velocity")
         self.tabs.addTab(self.tabProfile, "Profile")
-        self.tabs.addTab(self.tabUnc, "Uncertainty") 
-        self.tabs.addTab(self.tabReport, "Report") 
+        self.tabs.addTab(self.tabUnc, "Uncertainty")
+        self.tabs.addTab(self.tabReport, "Report")
+
+        self.tabDiag = QWidget()
+        self.diagText = QPlainTextEdit()
+        self.diagText.setReadOnly(True)
+        diagLayout = QVBoxLayout()
+        diagLayout.addWidget(self.diagText)
+        self.tabDiag.setLayout(diagLayout)
+        self.tabs.addTab(self.tabDiag, "Diagnostics")
 
 
 
@@ -1098,6 +1140,8 @@ app = QApplication(sys.argv)
 sys.excepthook = excepthook
 
 window = MainWindow()
-window.show()
+window.showMaximized()
+window.raise_()
+window.activateWindow()
 app.exec()
 sys.exit()

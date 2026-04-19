@@ -186,6 +186,7 @@ class MyForces(MyFiles):
         super(MyForces, self).__init__(c)
         self.sco=0
         self.data=[]
+        self.adata=[]
         self.maxgrp=-1
         self.maxS=int(0)
         self.adatalen =0
@@ -207,6 +208,8 @@ class MyForces(MyFiles):
         self.maxS=int(np.max(self.data[:,3]))
 
     def aveForce(self):
+        if len(self.data) == 0:
+            return
         self.adata =[]
         for s in range(int(self.maxS)+1):
             ix = np.where(self.data[:,3]==s)[0]
@@ -411,10 +414,7 @@ class MyConfig:
         self.hacconfig = True
     
     def trim(self,inp):
-        if self.ver==1:
-            return inp.replace('"', '')
-        else:
-            return inp
+        return inp.replace('"', '').strip()
 
     def scaletime(self,tim):
         """
@@ -423,8 +423,9 @@ class MyConfig:
         return (tim-self.t0).total_seconds()/24/3600
     
     def parsetime(self,inp):
+        inp = self.trim(inp)
         if self.ver==1:
-            start=datetime.datetime.strptime(self.trim(inp),'%m/%d/%Y %I:%M:%S %p')
+            start=datetime.datetime.strptime(inp,'%m/%d/%Y %I:%M:%S %p')
         else:
             start=datetime.datetime.strptime(inp,'%m/%d/%Y %H:%M:%S')
         return self.scaletime(start)
@@ -445,7 +446,7 @@ class MyConfig:
       
         
 class MyEnv():
-    def __init_(self):
+    def __init__(self):
         self.clear()
     
     def clear(self):
@@ -538,6 +539,8 @@ class k2Set():
 
 
     def calcMass(self,excl3=False,usebl=True,useg=True,usedens=True):
+        if len(self.myOns.adata)==0 or len(self.myOffs.adata)==0:
+            return
         self.Mass= Mass(self.myVelos,self.myOns,self.myOffs,self.myEnv,\
                         usebl,useg,usedens,covk=self.covk,excl3=excl3)
     
