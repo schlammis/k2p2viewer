@@ -1,7 +1,14 @@
 import os
+import sys
 import configparser
 
-_CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+def _find_config():
+    if getattr(sys, 'frozen', False):
+        # PyInstaller: look next to the .exe
+        return os.path.join(os.path.dirname(sys.executable), 'config.ini')
+    return os.path.join(os.path.dirname(__file__), '..', 'config.ini')
+
+_CONFIG_PATH = _find_config()
 
 class AppConfig:
     def __init__(self):

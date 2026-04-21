@@ -1,10 +1,36 @@
 import os,sys
-from appconfig import AppConfig
+
+# --- startup diagnostics (active in both dev and PyInstaller builds) ---
+_appdir = os.path.dirname(sys.executable) if getattr(sys,'frozen',False) \
+          else os.path.dirname(os.path.abspath(__file__))
+_logpath = os.path.join(_appdir,'k2viewer_startup.log')
+_logfile = open(_logpath,'w',buffering=1)
+
+def _log(msg):
+    _logfile.write(msg+'\n')
+    _logfile.flush()
+
+_log('=== k2viewer startup ===')
+_log(f'python   : {sys.version}')
+_log(f'frozen   : {getattr(sys,"frozen",False)}')
+_log(f'exe      : {sys.executable}')
+_log(f'cwd      : {os.getcwd()}')
+if getattr(sys,'frozen',False):
+    _log(f'MEIPASS  : {sys._MEIPASS}')
+
+try:
+    from appconfig import AppConfig
+    _log('import appconfig OK')
+except Exception as e:
+    _log(f'import appconfig FAILED: {e}')
+    raise
+
 import traceback
 import ctypes
 import xlwt,xlrd,xlutils.copy
 import datetime
 from shutil import copyfile
+_log('stdlib imports OK')
 
 ##https://www.pythonguis.com/tutorials/pyqt-basic-widgets/
 ##
@@ -46,11 +72,14 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit
 )
 import mplwidget
+_log('mplwidget OK')
 import numpy as np
 import time
 import sqlite3
 import k2dataset
+_log('k2dataset OK')
 import k2tools
+_log('k2tools OK')
 try:
        import pyi_splash  # type: ignore
        pyi_splash.update_text('UI Loaded ...')
@@ -1127,21 +1156,37 @@ def excepthook(exc_type, exc_value, exc_tb):
     tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
     print("error catched!:")
     print("error message:\n", tb)
-    fi=open('k2viewer.dbg','w')
-    fi.write("error catched!:\n")
-    fi.write("error message:\n"+ tb)
-    fi.close()
+    _log("EXCEPTION CAUGHT:\n" + tb)
+    _logfile.flush()
+    if getattr(sys, 'frozen', False):
+        dbgpath = os.path.join(os.path.dirname(sys.executable), 'k2viewer.dbg')
+    else:
+        dbgpath = 'k2viewer.dbg'
+    with open(dbgpath, 'w') as fi:
+        fi.write("error catched!:\n")
+        fi.write("error message:\n" + tb)
     QApplication.quit()
     # or QtWidgets.QApplication.exit(0)
 
-myappid = 'mycompany.myproduct.subproduct.version' # arbitrary string
-ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-app = QApplication(sys.argv)
-sys.excepthook = excepthook
-
-window = MainWindow()
-window.showMaximized()
-window.raise_()
-window.activateWindow()
-app.exec()
+try:
+    myappid = 'mycompany.myproduct.subproduct.version'
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    _log('creating QApplication')
+    app = QApplication(sys.argv)
+    _log('QApplication OK')
+    sys.excepthook = excepthook
+    _log('creating MainWindow')
+    window = MainWindow()
+    _log('MainWindow OK')
+    window.showMaximized()
+    window.raise_()
+    window.activateWindow()
+    _log('window shown — entering event loop')
+    app.exec()
+    _log('event loop exited normally')
+except Exception:
+    _log('FATAL ERROR:\n' + traceback.format_exc())
+    raise
+finally:
+    _logfile.close()
 sys.exit()
