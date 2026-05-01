@@ -71,21 +71,30 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QPlainTextEdit
 )
+try:
+    import pyi_splash  # type: ignore
+    pyi_splash.update_text('Loading interface...')
+    _splash = pyi_splash
+except Exception:
+    _splash = None
+
+def _splash_msg(msg):
+    if _splash:
+        _splash.update_text(msg)
+
 import mplwidget
 _log('mplwidget OK')
+_splash_msg('Loading numpy...')
 import numpy as np
 import time
 import sqlite3
+_splash_msg('Loading dataset...')
 import k2dataset
 _log('k2dataset OK')
+_splash_msg('Loading tools...')
 import k2tools
 _log('k2tools OK')
-try:
-       import pyi_splash  # type: ignore
-       pyi_splash.update_text('UI Loaded ...')
-       pyi_splash.close()
-except:
-    pass
+_splash_msg('Starting application...')
 
 mutex = QMutex()
 kda =   k2dataset.k2Set(mutex)    
@@ -118,10 +127,11 @@ class Worker(QObject):
     finished = pyqtSignal()
     intReady = pyqtSignal(int,int,int)
 
-    def __init__(self,excl3,order,usesinc):
+    def __init__(self,excl3,order,usesinc,dropfirst=False):
         self.order =order
         self.excl3=excl3
         self.usesinc = usesinc
+        self.dropfirst = dropfirst
         super(QObject, self).__init__()
 
     @pyqtSlot()
@@ -141,13 +151,13 @@ class Worker(QObject):
                 kda.myOns.aveForce()
                 kda.myOffs.aveForce()
             if k>=1 and k%Npl==0:
-                kda.calcMass()
+                kda.calcMass(dropfirst=self.dropfirst)
             if k>Npl:
-                self.intReady.emit(1,k+1,maxgrp+1)          
+                self.intReady.emit(1,k+1,maxgrp+1)
         kda.myVelos.fitMe(order=self.order,usesinc=self.usesinc)
         kda.myOns.aveForce()
         kda.myOffs.aveForce()
-        kda.calcMass(excl3=self.excl3)
+        kda.calcMass(excl3=self.excl3,dropfirst=self.dropfirst)
             
         self.intReady.emit(99,0,0) 
         
@@ -157,11 +167,6 @@ class Worker(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        #if os.getcwd().startswith('Z:\\BB'):    
-            #self.bd = r"K:\TableTopWattBalance\KIBB-g2\DATA"
-        #else:
-            
-            
         self.foBig     = QFont('Arial',10)
         self.foBigBold = QFont('Arial',10)
         self.foBigBold.setBold(True)
@@ -171,7 +176,6 @@ class MainWindow(QMainWindow):
         
         self.setWindowIcon(QIcon('k2viewer.png'))
         self.bd = AppConfig().datapath
-        print(self.bd)
         self.idle=True
         self.statust=time.time()
 
@@ -196,6 +200,9 @@ class MainWindow(QMainWindow):
         
 
         self.mytable.setFixedWidth(400)
+        self.mytable.setAlternatingRowColors(True)
+        self.mytable.setSelectionBehavior(QTableWidget.SelectRows)
+        self.mytable.verticalHeader().setVisible(False)
         self.Brefresh = QPushButton("Reload")
         
         ### The plot windows
@@ -208,12 +215,13 @@ class MainWindow(QMainWindow):
         
         ### check and spin boxes
         
-        self.cbShowVolt = QCheckBox()
-        self.cbUseSync  = QCheckBox()
-        self.cbMvsZ     = QCheckBox()
-        self.cbExc3sig  = QCheckBox()
-        self.sbOrder    = QSpinBox()
-        self.sbMass     = QDoubleSpinBox()
+        self.cbShowVolt  = QCheckBox()
+        self.cbUseSync   = QCheckBox()
+        self.cbMvsZ      = QCheckBox()
+        self.cbExc3sig   = QCheckBox()
+        self.cbDropFirst = QCheckBox()
+        self.sbOrder     = QSpinBox()
+        self.sbMass      = QDoubleSpinBox()
         self.sbOrder.setValue(6)
         self.sbOrder.setMinimum(1)
         self.sbOrder.setMaximum(10)
@@ -268,7 +276,7 @@ class MainWindow(QMainWindow):
             'Deviation from nominal',
             'Total uncertainy',
             'Tolerance (Class 3)',
-            'Temperatue',
+            'Temperature',
             'Barometric pressure',
             'Humidity'\
             ]
@@ -320,31 +328,35 @@ class MainWindow(QMainWindow):
         hlayout2  = QHBoxLayout()
         vlayout1 = QVBoxLayout()
         vlayout2 = QVBoxLayout()
-        
-    
-        
+
+        layout.setContentsMargins(10, 10, 10, 6)
+        layout.setSpacing(6)
+        hlayout.setSpacing(10)
+        vlayout1.setSpacing(6)
+        vlayout2.setSpacing(4)
+        hlayout2.setSpacing(10)
+        hlayout2.setContentsMargins(0, 2, 0, 2)
+
         widget = QWidget()
         widget.setLayout(layout)
         layout.addLayout(hlayout)
         hlayout.addLayout(vlayout1)
         hlayout.addLayout(vlayout2)
-        
+
         vlayout2.addLayout(hlayout2)
         vlayout2.addWidget(self.tabWidget)
 
         vlayout1.addWidget(self.mytable)
         vlayout1.addWidget(self.Brefresh)
-        
-        l2 = QLabel() 
-        l2.setText("order")
-        hlayout2.addWidget(l2)
+
+        hlayout2.addWidget(QLabel("order"))
         hlayout2.addWidget(self.sbOrder)
         hlayout2.addWidget(self.cbUseSync)
         hlayout2.addWidget(QLabel('use sinc'))
-        
-        hSpacer = QSpacerItem(20, 2,QSizePolicy.Expanding,
-                                     QSizePolicy.Minimum)
-        
+        hlayout2.addWidget(self.cbDropFirst)
+        hlayout2.addWidget(QLabel('drop first weighing'))
+
+        hSpacer = QSpacerItem(20, 2, QSizePolicy.Expanding, QSizePolicy.Minimum)
         hlayout2.addItem(hSpacer)
      
         self.setCentralWidget(widget)
@@ -354,6 +366,7 @@ class MainWindow(QMainWindow):
         self.Brefresh.clicked.connect(self.loadTable)
         self.cbShowVolt.clicked.connect(self.plotForce)
         self.cbUseSync.clicked.connect(self.recalcvelo)
+        self.cbDropFirst.clicked.connect(self.recalcvelo)
         self.cbMvsZ.clicked.connect(self.plotMass)
         self.cbExc3sig.clicked.connect(self.plotMass)
         self.tabWidget.tabs.currentChanged.connect(self.replot)
@@ -410,9 +423,9 @@ class MainWindow(QMainWindow):
                                     self.mytable.setItem(row_number,0,\
                                     QTableWidgetItem(str(run)))
                                     self.mytable.setItem(row_number,1,QTableWidgetItem(str(c.title)))
-                                    dbentry = cursor.execute("""SELECT run,value,
-                                    uncertainty,title FROM k2data 
-                                    WHERE run="{0}";""".format(run)).fetchall()
+                                    dbentry = cursor.execute(
+                                        "SELECT run,value,uncertainty,title FROM k2data WHERE run=?",
+                                        (run,)).fetchall()
                                     if len(dbentry)==0:
                                         continue
                                     dbentry=dbentry[0]
@@ -425,12 +438,11 @@ class MainWindow(QMainWindow):
                                     if dbentry[2]>-9e96:
                                         nitem =QTableWidgetItem('{0:6.4f}'.format(dbentry[2]))
                                     else:
-                                        nitem =QTableWidgetItem('n/a')                                
+                                        nitem =QTableWidgetItem('n/a')
                                     nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
                                     self.mytable.setItem(row_number,3,nitem)
-                                    #self.mytable.setItem(row_number,4,QTableWidgetItem(dbentry[3]))
-                            except:
-                                print('Problem reading ',s3)
+                            except Exception as e:
+                                print(f'Problem reading {s3}: {e}')
 
          connection.close()
          
@@ -556,7 +568,7 @@ class MainWindow(QMainWindow):
     def plotMass(self):
         if kda.Mass==0:
             return
-        kda.calcMass(excl3=self.cbExc3sig.isChecked())
+        kda.calcMass(excl3=self.cbExc3sig.isChecked(),dropfirst=self.cbDropFirst.isChecked())
         self.populateUnc()
         self.mplmass.canvas.ax1.clear()
         mutex.lock()
@@ -618,7 +630,7 @@ class MainWindow(QMainWindow):
         self.mplmass.canvas.bx1.set_ylim((be-me)*1e3,(en-me)*1e3)
         self.mplmass.canvas.ax1.set_xlabel(tla)    
         self.mplmass.canvas.ax1.set_ylabel('mass /mg')
-        self.mplmass.canvas.bx1.set_ylabel('deviaton  /\u00B5g')
+        self.mplmass.canvas.bx1.set_ylabel('deviation  /\u00B5g')
         self.mplmass.canvas.bx1.ticklabel_format(useOffset=False)
         self.mplmass.canvas.ax1.ticklabel_format(useOffset=False)
         self.mplmass.canvas.draw() 
@@ -706,7 +718,7 @@ class MainWindow(QMainWindow):
         order = int(self.sbOrder.value() )
         if kda.myVelos.maxGrpMem>0:
             kda.myVelos.fitMe(order,usesinc=self.cbUseSync.isChecked())
-            kda.calcMass(excl3=self.cbExc3sig.isChecked())
+            kda.calcMass(excl3=self.cbExc3sig.isChecked(),dropfirst=self.cbDropFirst.isChecked())
             self.replot()
 
     def convmass(self,truemass,density):
@@ -715,35 +727,15 @@ class MainWindow(QMainWindow):
         conv = truemass*(1-aird/density+aird/steeld)
         return conv
     
-    def getol(self,nom):
-        """ reports toleance in mg, nom is in g"""
-        if nom==20:
-            return 0.35
-        elif nom==10:
-            return 0.25
-        elif nom==5:
-            return 0.18
-        elif nom==3:
-            return 0.15        
-        elif nom==2:
-            return 0.13
-        elif nom==1:
-            return 0.1
-        elif nom==0.5:
-            return 0.08
-        elif nom==0.3:
-            return 0.07
-        elif nom==0.2:
-            return 0.06
-        elif nom==0.1:
-            return 0.05
-        elif nom==0.05:
-            return 0.042
-        elif nom==0.02:
-            return 0.035
-        elif nom==0.01:
-            return 0.030
-        return 0
+    _TOLERANCES = {
+        20: 0.35, 10: 0.25, 5: 0.18, 3: 0.15, 2: 0.13, 1: 0.1,
+        0.5: 0.08, 0.3: 0.07, 0.2: 0.06, 0.1: 0.05,
+        0.05: 0.042, 0.02: 0.035, 0.01: 0.030,
+    }
+
+    def getol(self, nom):
+        """Return Class-3 tolerance in mg; nom is nominal mass in g."""
+        return self._TOLERANCES.get(nom, 0)
         
     
     def WriteExcelHdr(self,fifn):
@@ -901,8 +893,8 @@ class MainWindow(QMainWindow):
         currentIndex=self.tabWidget.tabs.currentIndex()
         tat = self.tabWidget.tabs.tabText(currentIndex)
         if tat=='Force':
-           self.plotForce()
-        if tat=='Environmentals':
+            self.plotForce()
+        elif tat=='Environmentals':
             self.plotEnv()
         elif tat=='Velocity':
             self.plotVelocity()
@@ -932,14 +924,11 @@ class MainWindow(QMainWindow):
         self.mytable.setItem(self.calcrow,3,nitem)
         self.mytable.setItem(self.calcrow,1,QTableWidgetItem(title))
 
-        mycmd ="""
-        replace into k2data (run,value, uncertainty,title)
-        values  ("{0}",{1},{2},"{3}");""".\
-           format(self.runid,mass,massunc,title)
         connection = sqlite3.connect('k2viewer.db')
         cursor = connection.cursor()
-        #print(mycmd)
-        cursor.execute(mycmd)
+        cursor.execute(
+            "REPLACE INTO k2data (run,value,uncertainty,title) VALUES (?,?,?,?)",
+            (self.runid, mass, massunc, title))
         connection.commit()
         connection.close()    
    
@@ -963,7 +952,7 @@ class MainWindow(QMainWindow):
             self.updateTable()
             try:
                 self.WriteExcel()
-            except:
+            except Exception:
                 pass
 
         self.replot()
@@ -985,8 +974,9 @@ class MainWindow(QMainWindow):
             order = int(self.sbOrder.value() )
             usesinc=self.cbUseSync.isChecked()
             excl3=self.cbExc3sig.isChecked()
-    
-            self.obj = Worker(excl3,order,usesinc)  # no parent!
+            dropfirst=self.cbDropFirst.isChecked()
+
+            self.obj = Worker(excl3,order,usesinc,dropfirst)  # no parent!
             self.thread = QThread()  # no parent!
             self.obj.intReady.connect(self.readStatus)
             self.obj.moveToThread(self.thread)
@@ -1173,6 +1163,102 @@ try:
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     _log('creating QApplication')
     app = QApplication(sys.argv)
+    app.setFont(QFont('Segoe UI', 10))
+    app.setStyleSheet("""
+        QMainWindow, QWidget {
+            background-color: #F5F7FA;
+            color: #2D3748;
+        }
+        QTableWidget {
+            background-color: #FFFFFF;
+            alternate-background-color: #EDF2F7;
+            gridline-color: #E2E8F0;
+            border: 1px solid #CBD5E0;
+            border-radius: 4px;
+            selection-background-color: #BEE3F8;
+            selection-color: #1A202C;
+        }
+        QHeaderView::section {
+            background-color: #EDF2F7;
+            color: #4A5568;
+            padding: 5px 8px;
+            border: none;
+            border-bottom: 2px solid #CBD5E0;
+            font-weight: bold;
+        }
+        QPushButton {
+            background-color: #FFFFFF;
+            color: #4A5568;
+            border: 1px solid #CBD5E0;
+            border-radius: 4px;
+            padding: 5px 18px;
+        }
+        QPushButton:hover  { background-color: #EDF2F7; border-color: #A0AEC0; }
+        QPushButton:pressed { background-color: #E2E8F0; }
+        QTabWidget::pane {
+            border: 1px solid #CBD5E0;
+            border-radius: 4px;
+            background-color: #FFFFFF;
+            top: -1px;
+        }
+        QTabBar::tab {
+            background-color: #EDF2F7;
+            color: #718096;
+            padding: 7px 18px;
+            border: 1px solid #CBD5E0;
+            border-bottom: none;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+            margin-right: 2px;
+        }
+        QTabBar::tab:selected {
+            background-color: #FFFFFF;
+            color: #2D3748;
+            font-weight: bold;
+        }
+        QTabBar::tab:hover:!selected { background-color: #E2E8F0; }
+        QStatusBar {
+            background-color: #EDF2F7;
+            color: #718096;
+            border-top: 1px solid #CBD5E0;
+            font-size: 9pt;
+        }
+        QProgressBar {
+            background-color: #E2E8F0;
+            border: none;
+            border-radius: 3px;
+            max-height: 6px;
+            text-align: center;
+        }
+        QProgressBar::chunk { background-color: #68A4C4; border-radius: 3px; }
+        QCheckBox { spacing: 6px; }
+        QCheckBox::indicator {
+            width: 15px; height: 15px;
+            border: 1px solid #CBD5E0;
+            border-radius: 3px;
+            background-color: #FFFFFF;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #68A4C4;
+            border-color: #68A4C4;
+        }
+        QSpinBox, QDoubleSpinBox {
+            background-color: #FFFFFF;
+            border: 1px solid #CBD5E0;
+            border-radius: 4px;
+            padding: 3px 6px;
+        }
+        QSpinBox:focus, QDoubleSpinBox:focus { border-color: #68A4C4; }
+        QPlainTextEdit {
+            background-color: #FFFFFF;
+            border: 1px solid #E2E8F0;
+            border-radius: 4px;
+            font-family: Consolas, monospace;
+            font-size: 9pt;
+            color: #4A5568;
+        }
+        QLabel { background-color: transparent; }
+    """)
     _log('QApplication OK')
     sys.excepthook = excepthook
     _log('creating MainWindow')
@@ -1181,6 +1267,8 @@ try:
     window.showMaximized()
     window.raise_()
     window.activateWindow()
+    if _splash:
+        _splash.close()
     _log('window shown — entering event loop')
     app.exec()
     _log('event loop exited normally')

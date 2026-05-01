@@ -10,7 +10,6 @@ import k2tools
 from pathlib import Path
 import configparser
 import datetime
-from statsmodels.robust.scale import huber
 
 
 class MyFiles():
@@ -79,15 +78,15 @@ class MyVelos(MyFiles):
         hars=[1,2,3,4,5,6]
         T0= 4.240118026626671
         ix = np.where(self.adata[:,4]==0)[0]
-        u=k2tools.findT0(self.adata[ix,0],self.adata[ix,2],\
-                         hars,self.c.T0)
+        k2tools.findT0(self.adata[ix,0],self.adata[ix,2],\
+                       hars,self.c.T0)
         tau =0.1
         self.sincdata = np.array(self.adata)
         smax = int(np.max(self.adata[:,4]))
         for s in range(smax+1):
             ix = np.where(self.adata[:,4]==s)[0]
-            ov,av,pv,c2v,fv=k2tools.fit_sine(self.adata[ix,0],self.adata[ix,2],T0,hars)
-            oV,aV,pV,c2V,fV=k2tools.fit_sine(self.adata[ix,0],self.adata[ix,3],T0,hars)
+            ov,av,pv,_,fv=k2tools.fit_sine(self.adata[ix,0],self.adata[ix,2],T0,hars)
+            oV,aV,pV,_,fV=k2tools.fit_sine(self.adata[ix,0],self.adata[ix,3],T0,hars)
             resv=self.adata[ix,2]-fv
             resV=self.adata[ix,3]-fV
             
@@ -147,6 +146,8 @@ class MyVelos(MyFiles):
             self.piecewise.append(pfs)
       
     def getgrp(self,t):
+        if self.maxgrp<=0:
+            return 0
         o = self.blfit[0,:]
         if t<o[0]:
             return int(o[2])
@@ -233,7 +234,7 @@ class MyForces(MyFiles):
         
 class Mass:
     def __init__(self,Velos,myOns,myOffs,Env,usebl=True,useg=True,\
-                 usedens=True,covk=1,excl3=False):
+                 usedens=True,covk=1,excl3=False,dropfirst=False):
         self.covk = covk
         self.myEnv = Env
         self.myVelos = Velos
@@ -246,7 +247,7 @@ class Mass:
         
         on_t = self.myOns.adata[ix_on,0]
         on_z = self.myOns.adata[ix_on,1]
-        bl,blUnc = self.myVelos.getBlAndUnc(on_t)
+        bl,_ = self.myVelos.getBlAndUnc(on_t)
         bl_cor1 = k2tools.calcProfile(
             self.myVelos.fit_pars,self.myVelos.order,\
             on_z,self.myVelos.zmin,self.myVelos.zmax)
@@ -272,7 +273,7 @@ class Mass:
         
         of_t = self.myOffs.adata[ix_of,0]
         of_z = self.myOffs.adata[ix_of,1]
-        bl,blUnc = self.myVelos.getBlAndUnc(of_t)
+        bl,_ = self.myVelos.getBlAndUnc(of_t)
         bl_cor1 = k2tools.calcProfile(
             self.myVelos.fit_pars,self.myVelos.order,\
             of_z,self.myVelos.zmin,self.myVelos.zmax)
@@ -300,17 +301,21 @@ class Mass:
             of_d =self.of_d[ofix,:]
             on_d =self.on_d[onix,:]
 
-            for a1,b,a2 in zip(of_d[:-1,:],on_d,of_d[1:,:]):
-                ta1=a1[0]
-                tb=b[0]
-                ta2=a2[0]
-                f = (tb-ta1)/(ta2-ta1)
-                val =a1[2]*(1-f)+a2[2]*f
-                unc =np.sqrt(a1[3]**2*(1-f)**2+a2[3]**2*f**2)
-                grp =b[4]
-                z = (1-f)*a1[1]+f*a2[1]
-                row= np.r_[tb,z,val,unc,grp]
-                arow.append(row)
+            if dropfirst:
+                for a,b in zip(of_d[1:,:],on_d):
+                    arow.append(a)
+            else:
+                for a1,b,a2 in zip(of_d[:-1,:],on_d,of_d[1:,:]):
+                    ta1=a1[0]
+                    tb=b[0]
+                    ta2=a2[0]
+                    f = (tb-ta1)/(ta2-ta1)
+                    val =a1[2]*(1-f)+a2[2]*f
+                    unc =np.sqrt(a1[3]**2*(1-f)**2+a2[3]**2*f**2)
+                    grp =b[4]
+                    z = (1-f)*a1[1]+f*a2[1]
+                    row= np.r_[tb,z,val,unc,grp]
+                    arow.append(row)
         self.ofa_d= np.array(arow)
         diffs=[]
         for g in range(1+int(np.max(of_grp))):
@@ -326,9 +331,8 @@ class Mass:
                 if usedens:
                     denscorr=1+airdens/(self.c.dens)
                 else:
-                    denscorr=False
+                    denscorr=1.0
                 di= (b[2]-a[2])*denscorr
-                su =b[2]+a[2]
                 z = 0.5*(a[1]+b[1])
                 unc =np.sqrt(a[3]**2+b[3]**2)
                 grp =b[4]
@@ -337,10 +341,11 @@ class Mass:
         if len(diffs)>6 and excl3==True:
             diffs = np.array(diffs)
             try:
+                from statsmodels.robust.scale import huber
                 mean,sig= huber(diffs[:,2])
                 ix = np.where(np.abs(diffs[:,2]-mean)<5*sig)[0]
                 self.dif_d=diffs[ix,:]
-            except:
+            except Exception:
                 self.dif_d= np.array(diffs)
         else:                                
             self.dif_d= np.array(diffs)      
@@ -374,8 +379,8 @@ class MyConfig:
         self.config = configparser.ConfigParser()
         self.config.read(os.path.join(bd0,'config.ini'))
         try:
-            verstr= self.config['Measurement']['SoftwareVersion']   
-        except:
+            verstr= self.config['Measurement']['SoftwareVersion']
+        except Exception:
             print(self.bd0)
         self.ver=1
         if verstr.startswith('"'):
@@ -515,7 +520,7 @@ class k2Set():
         self.clear()
     
     def setcoverage(self,k):
-        self.covk=2
+        self.covk=k
         
     def clear(self):
         self.clearRefMass()
@@ -538,11 +543,11 @@ class k2Set():
         self.mutex.unlock()
 
 
-    def calcMass(self,excl3=False,usebl=True,useg=True,usedens=True):
+    def calcMass(self,excl3=False,usebl=True,useg=True,usedens=True,dropfirst=False):
         if len(self.myOns.adata)==0 or len(self.myOffs.adata)==0:
             return
         self.Mass= Mass(self.myVelos,self.myOns,self.myOffs,self.myEnv,\
-                        usebl,useg,usedens,covk=self.covk,excl3=excl3)
+                        usebl,useg,usedens,covk=self.covk,excl3=excl3,dropfirst=dropfirst)
     
         
     def readEnv(self):
