@@ -51,10 +51,12 @@ from PyQt5.QtCore import (
 from PyQt5.QtGui import QFont,QIcon
 from PyQt5.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QLabel,
     QMainWindow,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
@@ -135,7 +137,7 @@ class Worker(QObject):
     finished = pyqtSignal()
     intReady = pyqtSignal(int,int,int)
 
-    def __init__(self,excl3,order,usesinc,dropfirst=False):
+    def __init__(self,excl3,order,usesinc,dropfirst=0):
         super().__init__()
         self.order =order
         self.excl3=excl3
@@ -227,7 +229,14 @@ class MainWindow(QMainWindow):
         self.cbUseSync   = QCheckBox()
         self.cbMvsZ      = QCheckBox()
         self.cbExc3sig   = QCheckBox()
-        self.cbDropFirst = QCheckBox()
+        self.rbDrop0     = QRadioButton('drop 0')
+        self.rbDrop1     = QRadioButton('drop 1')
+        self.rbDrop2     = QRadioButton('drop 2')
+        self.rbDrop0.setChecked(True)
+        self.rgDrop      = QButtonGroup()
+        self.rgDrop.addButton(self.rbDrop0, 0)
+        self.rgDrop.addButton(self.rbDrop1, 1)
+        self.rgDrop.addButton(self.rbDrop2, 2)
         self.sbOrder     = QSpinBox()
         self.sbMass      = QDoubleSpinBox()
         self.sbOrder.setValue(6)
@@ -361,8 +370,9 @@ class MainWindow(QMainWindow):
         hlayout2.addWidget(self.sbOrder)
         hlayout2.addWidget(self.cbUseSync)
         hlayout2.addWidget(QLabel('use sinc'))
-        hlayout2.addWidget(self.cbDropFirst)
-        hlayout2.addWidget(QLabel('drop first weighing'))
+        hlayout2.addWidget(self.rbDrop0)
+        hlayout2.addWidget(self.rbDrop1)
+        hlayout2.addWidget(self.rbDrop2)
 
         hSpacer = QSpacerItem(20, 2, QSizePolicy.Expanding, QSizePolicy.Minimum)
         hlayout2.addItem(hSpacer)
@@ -374,7 +384,7 @@ class MainWindow(QMainWindow):
         self.Brefresh.clicked.connect(self.loadTable)
         self.cbShowVolt.clicked.connect(self.plotForce)
         self.cbUseSync.clicked.connect(self.recalcvelo)
-        self.cbDropFirst.clicked.connect(self.recalcvelo)
+        self.rgDrop.buttonClicked.connect(self.recalcvelo)
         self.cbMvsZ.clicked.connect(self.plotMass)
         self.cbExc3sig.clicked.connect(self.plotMass)
         self.tabWidget.tabs.currentChanged.connect(self.replot)
@@ -576,7 +586,7 @@ class MainWindow(QMainWindow):
     def plotMass(self):
         if kda.Mass==0:
             return
-        kda.calcMass(excl3=self.cbExc3sig.isChecked(),dropfirst=self.cbDropFirst.isChecked())
+        kda.calcMass(excl3=self.cbExc3sig.isChecked(),dropfirst=self._dropN())
         self.populateUnc()
         self.mplmass.canvas.ax1.clear()
         mutex.lock()
@@ -722,11 +732,14 @@ class MainWindow(QMainWindow):
         
 
 
+    def _dropN(self):
+        return self.rgDrop.checkedId()
+
     def recalcvelo(self):
         order = int(self.sbOrder.value() )
         if kda.myVelos.maxGrpMem>0:
             kda.myVelos.fitMe(order,usesinc=self.cbUseSync.isChecked())
-            kda.calcMass(excl3=self.cbExc3sig.isChecked(),dropfirst=self.cbDropFirst.isChecked())
+            kda.calcMass(excl3=self.cbExc3sig.isChecked(),dropfirst=self._dropN())
             self.replot()
 
     def convmass(self,truemass,density):
@@ -982,7 +995,7 @@ class MainWindow(QMainWindow):
             order = int(self.sbOrder.value() )
             usesinc=self.cbUseSync.isChecked()
             excl3=self.cbExc3sig.isChecked()
-            dropfirst=self.cbDropFirst.isChecked()
+            dropfirst=self._dropN()
 
             self.obj = Worker(excl3,order,usesinc,dropfirst)  # no parent!
             self.thread = QThread()  # no parent!
