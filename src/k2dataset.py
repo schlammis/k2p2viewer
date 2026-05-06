@@ -55,7 +55,9 @@ class MyVelos(MyFiles):
     
         
     def readFn(self,grp,fi,Vmul=1000):
+        print(f'[Velo] reading grp={grp} {os.path.basename(fi)}')
         data = np.loadtxt(fi)
+        print(f'[Velo] loaded {data.shape} rows')
         self.sincdata=[]
         t1 = data[:,0]
         t2 = data[:,1]
@@ -102,15 +104,15 @@ class MyVelos(MyFiles):
     def fitMe(self,order=4,usesinc=False):
         if self.maxGrpMem<0:
             return
+        print(f'[Velo] fitMe order={order} usesinc={usesinc} adata={len(self.adata)} rows')
         self.z0=0
         self.order=order
         self.zmin = np.min(self.adata[:,1])
-        self.zmax = np.max(self.adata[:,1])        
+        self.zmax = np.max(self.adata[:,1])
         self.tmin = np.min(self.adata[:,0])
-        self.tmax = np.max(self.adata[:,0])    
-        
+        self.tmax = np.max(self.adata[:,0])
+
         if usesinc == False:
-        
             self.blfit,self.C2,self.NDF,self.fit_pars = \
                 k2tools.FitLikeACanadianOrthoMaster(self.adata,\
                             zmin=self.zmin,zmax=self.zmax,\
@@ -122,7 +124,7 @@ class MyVelos(MyFiles):
                 k2tools.FitLikeACanadianOrthoMaster(self.sincdata,\
                             zmin=self.zmin,zmax=self.zmax,\
                                 order=self.order,z0=self.z0)
-                
+        print(f'[Velo] fitMe done C2={self.C2:.4f} NDF={self.NDF} maxgrp_raw={max(self.blfit[:,2]):.0f}')
         self.maxgrp =int(max(self.blfit[:,2]))
         self.cov=[]
         self.piecewise=[]
@@ -193,7 +195,9 @@ class MyForces(MyFiles):
         self.adatalen =0
 
     def readFn(self,grp,fi,Vmul=1):
+        print(f'[Force] reading grp={grp} {os.path.basename(fi)}')
         data = np.loadtxt(fi)
+        print(f'[Force] loaded {data.shape} rows')
         t = data[:,0]
         I = Vmul*data[:,1]*self.c.Vcal/self.c.R*1e6
         z = data[:,2]
@@ -210,7 +214,9 @@ class MyForces(MyFiles):
 
     def aveForce(self):
         if len(self.data) == 0:
+            print('[Force] aveForce: no data, skipping')
             return
+        print(f'[Force] aveForce: {len(self.data)} raw rows, maxS={self.maxS}')
         self.adata =[]
         for s in range(int(self.maxS)+1):
             ix = np.where(self.data[:,3]==s)[0]
@@ -235,6 +241,8 @@ class MyForces(MyFiles):
 class Mass:
     def __init__(self,Velos,myOns,myOffs,Env,usebl=True,useg=True,\
                  usedens=True,covk=1,excl3=False,dropfirst=False):
+        print(f'[Mass] init: ons={len(myOns.adata)} offs={len(myOffs.adata)} '
+              f'maxGrpMem={Velos.maxGrpMem} dropfirst={dropfirst}')
         self.covk = covk
         self.myEnv = Env
         self.myVelos = Velos
@@ -243,6 +251,7 @@ class Mass:
         self.c = self.myVelos.c
 
         ix_on = np.where(self.myOns.adata[:,4]<self.myVelos.maxGrpMem)[0]
+        print(f'[Mass] ix_on={len(ix_on)} rows selected')
 
         
         on_t = self.myOns.adata[ix_on,0]
@@ -269,6 +278,7 @@ class Mass:
         self.on_d = np.c_[on_t,on_z,on_F,on_Func,on_grp]
         
         ix_of = np.where(self.myOffs.adata[:,4]<self.myVelos.maxGrpMem)[0]
+        print(f'[Mass] ix_of={len(ix_of)} rows selected')
 
         
         of_t = self.myOffs.adata[ix_of,0]
@@ -302,21 +312,24 @@ class Mass:
             on_d =self.on_d[onix,:]
 
             if dropfirst:
-                for a,b in zip(of_d[1:,:],on_d):
-                    arow.append(a)
+                beg=1
             else:
-                for a1,b,a2 in zip(of_d[:-1,:],on_d,of_d[1:,:]):
-                    ta1=a1[0]
-                    tb=b[0]
-                    ta2=a2[0]
-                    f = (tb-ta1)/(ta2-ta1)
-                    val =a1[2]*(1-f)+a2[2]*f
-                    unc =np.sqrt(a1[3]**2*(1-f)**2+a2[3]**2*f**2)
-                    grp =b[4]
-                    z = (1-f)*a1[1]+f*a2[1]
-                    row= np.r_[tb,z,val,unc,grp]
-                    arow.append(row)
+                beg=0
+
+            for a1,b,a2 in zip(of_d[beg:-1],on_d[beg:],of_d[beg+1:]):
+                ta1=a1[0]
+                tb=b[0]
+                ta2=a2[0]
+                if (ta1-ta2)==0: continue
+                f = (tb-ta1)/(ta2-ta1)
+                val =a1[2]*(1-f)+a2[2]*f
+                unc =np.sqrt(a1[3]**2*(1-f)**2+a2[3]**2*f**2)
+                grp =b[4]
+                z = (1-f)*a1[1]+f*a2[1]
+                row= np.r_[tb,z,val,unc,grp]
+                arow.append(row)
         self.ofa_d= np.array(arow)
+        print(f'[Mass] ofa_d shape={np.shape(self.ofa_d)}')
         diffs=[]
         for g in range(1+int(np.max(of_grp))):
             ofix = np.where(self.ofa_d[:,4]==g)[0]
@@ -338,6 +351,7 @@ class Mass:
                 grp =b[4]
                 diffs.append(np.r_[t,z,di,unc,grp])
 
+        print(f'[Mass] diffs={len(diffs)} excl3={excl3}')
         if len(diffs)>6 and excl3==True:
             diffs = np.array(diffs)
             try:
@@ -349,6 +363,7 @@ class Mass:
                 self.dif_d= np.array(diffs)
         else:                                
             self.dif_d= np.array(diffs)      
+        print(f'[Mass] dif_d shape={np.shape(self.dif_d)}')
         self.avemass = sum(self.dif_d[:,2]/self.dif_d[:,3]**2)/sum(1/self.dif_d[:,3]**2)
         self.uncmass = 1/np.sqrt(sum(1/self.dif_d[:,3]**2))*self.covk
         self.c2=sum((self.dif_d[:,2]-self.avemass)**2/self.dif_d[:,3]**2)
@@ -376,17 +391,20 @@ class MyConfig:
         
     def setbd0(self,bd0):
         self.bd0=bd0
+        print(f'[Config] reading {os.path.join(bd0,"config.ini")}')
         self.config = configparser.ConfigParser()
         self.config.read(os.path.join(bd0,'config.ini'))
         try:
             verstr= self.config['Measurement']['SoftwareVersion']
-        except Exception:
-            print(self.bd0)
+        except Exception as e:
+            print(f'[Config] ERROR reading SoftwareVersion: {e}')
+            verstr='1'
         self.ver=1
         if verstr.startswith('"'):
             verstr = self.trim(verstr)
         self.mydict['Version'] = float(verstr)
         self.ver = self.mydict['Version']
+        print(f'[Config] version={self.ver}')
         self.mydict['Title']           = self.parse(self.config['Measurement']['MeasDesc'],'string')       
         if 'SerialNo' in self.config['Measurement']:
             self.mydict['SerialNo']        = self.parse(self.config['Measurement']['SerialNo'],'string')       
@@ -545,23 +563,38 @@ class k2Set():
 
     def calcMass(self,excl3=False,usebl=True,useg=True,usedens=True,dropfirst=False):
         if len(self.myOns.adata)==0 or len(self.myOffs.adata)==0:
+            print('[k2Set] calcMass: adata empty, skipping')
             return
-        self.Mass= Mass(self.myVelos,self.myOns,self.myOffs,self.myEnv,\
-                        usebl,useg,usedens,covk=self.covk,excl3=excl3,dropfirst=dropfirst)
+        print(f'[k2Set] calcMass excl3={excl3} dropfirst={dropfirst}')
+        try:
+            self.Mass= Mass(self.myVelos,self.myOns,self.myOffs,self.myEnv,\
+                            usebl,useg,usedens,covk=self.covk,excl3=excl3,dropfirst=dropfirst)
+            print(f'[k2Set] calcMass done avemass={self.Mass.avemass:.6g}')
+        except Exception as e:
+            import traceback
+            print(f'[k2Set] calcMass FAILED: {e}')
+            print(traceback.format_exc())
     
         
     def readEnv(self):
+        print(f'[k2Set] readEnv bd0={self.bd0} guesslen={self.guesslen:.1f}')
         self.myEnv.setbd0(self.bd0,self.guesslen)
+        print(f'[k2Set] readEnv done hasEnv={self.myEnv.hasEnv} edata={len(self.myEnv.edata)} rows')
         
 
     def setbd0(self,bd0):
+        print(f'[k2Set] setbd0: {bd0}')
         self.bd0= bd0
         self.c.setbd0(bd0)
+        print(f'[k2Set] config read ok, ver={self.c.ver}')
         self.ver = self.c.ver
         self.allfiles = self.readNSort()
+        print(f'[k2Set] readNSort: {len(self.allfiles) if self.allfiles else 0} files')
         self.assignFiles()
         self.totGrps  = max(self.myVelos.totGrps(),self.myOns.totGrps(),\
                       self.myOffs.totGrps())
+        print(f'[k2Set] totGrps={self.totGrps} velo={self.myVelos.totGrps()} '
+              f'ons={self.myOns.totGrps()} offs={self.myOffs.totGrps()}')
                
     def readNSort(self):
         if self.bd0=='':

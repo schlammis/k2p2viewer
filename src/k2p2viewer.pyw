@@ -74,6 +74,10 @@ from PyQt5.QtWidgets import (
 try:
     import pyi_splash  # type: ignore
     pyi_splash.update_text('Loading interface...')
+    try:
+        pyi_splash._SPLASH_SCREEN.tk.attributes('-topmost', False)
+    except Exception:
+        pass
     _splash = pyi_splash
 except Exception:
     _splash = None
@@ -103,6 +107,8 @@ kda.clear()
 
 
 
+_runtimelog = open(os.path.join(_appdir, 'k2viewer_runtime.log'), 'w', buffering=1)
+
 class DiagStream(QObject):
     newText = pyqtSignal(str)
 
@@ -111,6 +117,8 @@ class DiagStream(QObject):
         self._buf = ''
 
     def write(self, text):
+        _runtimelog.write(text)
+        _runtimelog.flush()
         self._buf += text
         while '\n' in self._buf:
             line, self._buf = self._buf.split('\n', 1)
@@ -128,11 +136,11 @@ class Worker(QObject):
     intReady = pyqtSignal(int,int,int)
 
     def __init__(self,excl3,order,usesinc,dropfirst=False):
+        super().__init__()
         self.order =order
         self.excl3=excl3
         self.usesinc = usesinc
         self.dropfirst = dropfirst
-        super(QObject, self).__init__()
 
     @pyqtSlot()
     def procCounter(self): # A slot takes no params
@@ -225,7 +233,7 @@ class MainWindow(QMainWindow):
         self.sbOrder.setValue(6)
         self.sbOrder.setMinimum(1)
         self.sbOrder.setMaximum(10)
-        self.cbUseSync.setChecked(True)
+        self.cbUseSync.setChecked(False)
         self.cbExc3sig.setChecked(True)
       
         self.sbMass.setMinimumWidth(100)
@@ -531,15 +539,15 @@ class MainWindow(QMainWindow):
         mutex.lock()
         tmul,tla = kda.tmul()
         if len(kda.myVelos.blfit)>0:
-            p1,=self.mplvel.canvas.ax1.plot(
+            self.mplvel.canvas.ax1.plot(
                 kda.myVelos.blfit[:,0]*tmul,\
                 kda.myVelos.blfit[:,1],'b.')
             if kda.myVelos.maxgrp>=1:
                 tt = np.linspace(kda.myVelos.tmin,kda.myVelos.tmax,400)
-                val,unc =  kda.myVelos.getBlAndUnc(tt) 
-                p1,=self.mplvel.canvas.ax1.plot(
+                val,unc =  kda.myVelos.getBlAndUnc(tt)
+                self.mplvel.canvas.ax1.plot(
                     tt*tmul,\
-                   val,'k-')
+                    val,'k-')
                 self.mplvel.canvas.ax1.fill_between(
                     tt*tmul,val-unc,val+unc,fc='r',alpha=0.1)
             
@@ -1144,8 +1152,11 @@ class MyTabWidget(QWidget):
 
 def excepthook(exc_type, exc_value, exc_tb):
     tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-    print("error catched!:")
-    print("error message:\n", tb)
+    try:
+        print("error caught:")
+        print(tb)
+    except Exception:
+        sys.__stderr__.write("error caught (stdout unavailable):\n" + tb)
     _log("EXCEPTION CAUGHT:\n" + tb)
     _logfile.flush()
     if getattr(sys, 'frozen', False):
