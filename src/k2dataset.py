@@ -240,7 +240,7 @@ class MyForces(MyFiles):
         
 class Mass:
     def __init__(self,Velos,myOns,myOffs,Env,usebl=True,useg=True,\
-                 usedens=True,covk=1,excl3=False,dropfirst=False):
+                 usedens=True,covk=1,excl3=False,dropfirst=0):
         print(f'[Mass] init: ons={len(myOns.adata)} offs={len(myOffs.adata)} '
               f'maxGrpMem={Velos.maxGrpMem} dropfirst={dropfirst}')
         self.covk = covk
@@ -311,10 +311,7 @@ class Mass:
             of_d =self.of_d[ofix,:]
             on_d =self.on_d[onix,:]
 
-            if dropfirst:
-                beg=1
-            else:
-                beg=0
+            beg = dropfirst
 
             for a1,b,a2 in zip(of_d[beg:-1],on_d[beg:],of_d[beg+1:]):
                 ta1=a1[0]
@@ -335,7 +332,7 @@ class Mass:
             ofix = np.where(self.ofa_d[:,4]==g)[0]
             onix = np.where(self.on_d[:,4]==g)[0]
             of_d =self.ofa_d[ofix,:]
-            on_d =self.on_d[onix,:]
+            on_d =self.on_d[onix,:][dropfirst:]
 
             for a,b in zip(of_d,on_d):
                 t = 0.5*(b[0]+a[0])
@@ -561,7 +558,7 @@ class k2Set():
         self.mutex.unlock()
 
 
-    def calcMass(self,excl3=False,usebl=True,useg=True,usedens=True,dropfirst=False):
+    def calcMass(self,excl3=False,usebl=True,useg=True,usedens=True,dropfirst=0):
         if len(self.myOns.adata)==0 or len(self.myOffs.adata)==0:
             print('[k2Set] calcMass: adata empty, skipping')
             return
