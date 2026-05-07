@@ -69,7 +69,9 @@ from PyQt5.QtWidgets import (
     QDoubleSpinBox,
     QAbstractSpinBox,
     QProgressBar,
-    QPlainTextEdit
+    QPlainTextEdit,
+    QFileDialog,
+    QMessageBox
 )
 try:
     import pyi_splash  # type: ignore
@@ -398,7 +400,21 @@ class MainWindow(QMainWindow):
 
 
 
+    def _prompt_datapath(self):
+        QMessageBox.warning(self, 'Data path not found',
+            f'The configured data path does not exist:\n\n{self.bd}\n\n'
+            'Please select the data directory.')
+        path = QFileDialog.getExistingDirectory(self, 'Select data directory', self.bd)
+        if path:
+            self.bd = path
+            AppConfig.save_datapath(path)
+
     def loadTable(self):
+         if not os.path.isdir(self.bd):
+             self._prompt_datapath()
+         if not os.path.isdir(self.bd):
+             self.statusBar.showMessage(f'Data path not configured: {self.bd}', 0)
+             return
          c = k2dataset.MyConfig()
          self.mytable.clearContents()
          self.mytable.setRowCount(0)

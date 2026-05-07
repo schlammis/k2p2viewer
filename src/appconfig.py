@@ -17,3 +17,13 @@ class AppConfig:
         cfg.read(os.path.abspath(_CONFIG_PATH))
         if 'Paths' in cfg and 'DATAPATH' in cfg['Paths']:
             self.datapath = cfg['Paths']['DATAPATH']
+
+    @staticmethod
+    def save_datapath(path):
+        cfg = configparser.ConfigParser()
+        cfg.read(os.path.abspath(_CONFIG_PATH))
+        if 'Paths' not in cfg:
+            cfg['Paths'] = {}
+        cfg['Paths']['DATAPATH'] = path
+        with open(os.path.abspath(_CONFIG_PATH), 'w') as f:
+            cfg.write(f)
