@@ -434,6 +434,8 @@ class MainWindow(QMainWindow):
         self.sbMass.setDecimals(4)
         self.sbMass.setButtonSymbols(QAbstractSpinBox.NoButtons)
         self.sbMass.setKeyboardTracking(False)
+        if cfg.ref_mass != 0:
+            self.sbMass.setValue(cfg.ref_mass)
         
         ### global labels
         
@@ -1304,6 +1306,7 @@ class MainWindow(QMainWindow):
 
 
     def gotmassval(self,val):
+        AppConfig.save_ref_mass(val)
         if val!=0:
             kda.setRefMass(val)
             self.plotMass()
@@ -1569,6 +1572,13 @@ class MainWindow(QMainWindow):
                 self.WriteExcel()
             except Exception:
                 pass
+            ref = self.sbMass.value()
+            if ref != 0 and kda.Mass != 0:
+                if abs(kda.Mass.avemass - ref) / ref > 0.001:
+                    self.sbMass.setValue(0)
+                    AppConfig.save_ref_mass(0)
+                else:
+                    kda.setRefMass(ref)
             self.replot()
             self.idle=True
             return
@@ -1587,7 +1597,6 @@ class MainWindow(QMainWindow):
             return
         if self.idle:
             self.idle = False
-            self.sbMass.clear()
             self.calcrow = item.row()
             self.runid = t.item(item.row(), 0).text()
             filePath = os.path.join(self.bd,self.runid[0:4],self.runid[4:6],self.runid[6])

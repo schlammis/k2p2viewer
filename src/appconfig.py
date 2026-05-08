@@ -27,6 +27,7 @@ class AppConfig:
         self.fit_order = 6
         self.use_sinc = False
         self.drop_n = 0
+        self.ref_mass = 0.0
         self.needs_setup = True
         cfg = configparser.ConfigParser()
         cfg.read(os.path.abspath(_CONFIG_PATH))
@@ -50,6 +51,10 @@ class AppConfig:
                 self.drop_n = int(g.get('drop_n', '0'))
             except ValueError:
                 pass
+            try:
+                self.ref_mass = float(g.get('ref_mass', '0'))
+            except ValueError:
+                self.ref_mass = 0.0
             if 'loglevel' not in g:
                 AppConfig.save(self.balance_name, self.datapath, self.loglevel)
 
@@ -105,6 +110,16 @@ class AppConfig:
         cfg['GENERAL']['fit_order'] = str(fit_order)
         cfg['GENERAL']['use_sinc']  = 'true' if use_sinc else 'false'
         cfg['GENERAL']['drop_n']    = str(drop_n)
+        with open(os.path.abspath(_CONFIG_PATH), 'w') as f:
+            cfg.write(f)
+
+    @staticmethod
+    def save_ref_mass(ref_mass):
+        cfg = configparser.ConfigParser()
+        cfg.read(os.path.abspath(_CONFIG_PATH))
+        if 'GENERAL' not in cfg:
+            cfg['GENERAL'] = {}
+        cfg['GENERAL']['ref_mass'] = str(ref_mass)
         with open(os.path.abspath(_CONFIG_PATH), 'w') as f:
             cfg.write(f)
 
