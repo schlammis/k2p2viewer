@@ -24,7 +24,7 @@ try:
 except Exception as e:
     _log(f'import appconfig FAILED: {e}')
     raise
-
+import threading
 import traceback
 import ctypes
 import xlwt,xlrd,xlutils.copy
@@ -73,7 +73,11 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QPlainTextEdit,
     QFileDialog,
-    QMessageBox
+    QInputDialog,
+    QMessageBox,
+    QHeaderView,
+    QMenu,
+    QLineEdit
 )
 try:
     import pyi_splash  # type: ignore
@@ -104,9 +108,20 @@ import k2tools
 _log('k2tools OK')
 _splash_msg('Starting application...')
 
+def _read_version():
+    for candidate in [_appdir, os.path.join(_appdir, '..')]:
+        try:
+            with open(os.path.join(candidate, 'version.txt')) as _f:
+                return _f.read().strip()
+        except Exception:
+            pass
+    return "unknown"
+APP_VERSION = _read_version()
+LOG_LEVEL   = AppConfig().loglevel
+
 mutex = QMutex()
-kda =   k2dataset.k2Set(mutex)    
-kda.setcoverage(2) 
+kda =   k2dataset.k2Set(mutex)
+kda.setcoverage(2)
 kda.clear()
 
 
@@ -121,18 +136,101 @@ class DiagStream(QObject):
         self._buf = ''
 
     def write(self, text):
-        _runtimelog.write(text)
-        _runtimelog.flush()
         self._buf += text
         while '\n' in self._buf:
             line, self._buf = self._buf.split('\n', 1)
             if line:
+                ts = datetime.datetime.now().strftime('%y%m%d %H%M%S')
+                _runtimelog.write(f'{ts} {line}\n')
+                _runtimelog.flush()
                 self.newText.emit(line)
 
     def flush(self):
         if self._buf.strip():
             self.newText.emit(self._buf)
             self._buf = ''
+
+
+class TableLoader(QObject):
+    activeRow = pyqtSignal(str, str, str, str, str)   # balance, run, title, mass, unc
+    greyRow   = pyqtSignal(str, str, str, str, str)
+    finished  = pyqtSignal()
+
+    def __init__(self, bd, balance_name, known_balances):
+        super().__init__()
+        self.bd = bd
+        self.balance_name = balance_name
+        self.known_balances = known_balances  # all balance names from config.ini
+        self._abort = False
+
+    def abort(self):
+        self._abort = True
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            self._load()
+        except Exception as e:
+            print(f'TableLoader error: {e}')
+        finally:
+            self.finished.emit()
+
+    def _load(self):
+        c = k2dataset.MyConfig()
+        conn = sqlite3.connect('k2viewer.db')
+        cur = conn.cursor()
+        try:
+            for s1 in sorted([f.path for f in os.scandir(self.bd) if f.is_dir()], reverse=True):
+                if self._abort:
+                    return
+                yymm = os.path.split(s1)[-1]
+                if len(yymm) != 4:
+                    continue
+                for s2 in sorted([f.path for f in os.scandir(s1) if f.is_dir()], reverse=True):
+                    if self._abort:
+                        return
+                    day = os.path.split(s2)[-1]
+                    if len(day) != 2:
+                        continue
+                    for s3 in sorted([f.path for f in os.scandir(s2) if f.is_dir()], reverse=True):
+                        if self._abort:
+                            return
+                        if not os.path.isfile(os.path.join(s3, 'config.ini')):
+                            continue
+                        try:
+                            c.setbd0(s3)
+                            letter = os.path.split(s3)[-1]
+                            if len(letter) != 1:
+                                continue
+                            run = yymm + day + letter
+                            title = str(c.title)
+                            rows = cur.execute(
+                                "SELECT value,uncertainty FROM k2data WHERE run=? AND balance=?",
+                                (run, self.balance_name)).fetchall()
+                            if rows:
+                                val, unc = rows[0]
+                                mass_str = '{0:,.4f}'.format(val) if val > -9e96 else 'n/a'
+                                unc_str  = '{0:6.4f}'.format(unc) if unc > -9e96 else 'n/a'
+                            else:
+                                mass_str = unc_str = ''
+                            self.activeRow.emit(self.balance_name, run, title, mass_str, unc_str)
+                        except Exception as e:
+                            print(f'Problem reading {s3}: {e}')
+
+            if not self._abort:
+                other = [b for b in self.known_balances if b != self.balance_name]
+                if other:
+                    placeholders = ','.join('?' * len(other))
+                    for run, bal, val, unc, title in cur.execute(
+                            f"SELECT run,balance,value,uncertainty,title FROM k2data "
+                            f"WHERE balance IN ({placeholders}) ORDER BY run DESC", other).fetchall():
+                        if self._abort:
+                            return
+                        mass_str = '{0:,.4f}'.format(val) if val > -9e96 else 'n/a'
+                        unc_str  = '{0:6.4f}'.format(unc) if unc > -9e96 else 'n/a'
+                        self.greyRow.emit(bal, run, title or '', mass_str, unc_str)
+        finally:
+            conn.close()
 
 
 class Worker(QObject):
@@ -177,8 +275,11 @@ class Worker(QObject):
         
 # Subclass QMainWindow to customize your application's main window
 class MainWindow(QMainWindow):
+    updateAvailable = pyqtSignal(str, str)  # latest version, download url
+
     def __init__(self):
         super().__init__()
+        self.updateAvailable.connect(self._show_update_dialog)
         self.foBig     = QFont('Arial',10)
         self.foBigBold = QFont('Arial',10)
         self.foBigBold.setBold(True)
@@ -187,34 +288,35 @@ class MainWindow(QMainWindow):
 
         
         self.setWindowIcon(QIcon('k2viewer.png'))
-        self.bd = AppConfig().datapath
+        cfg = AppConfig()
+        self.bd = cfg.datapath
+        self.balance_name = cfg.balance_name
+
         self.idle=True
         self.statust=time.time()
+        self._table_thread = None
+        self._table_loader = None
+        self._table_loading = False
 
         self.thread = QThread()
-        self.setWindowTitle("Kibb-g2 Viewer")
+        title_balance = f"  [{self.balance_name}]" if self.balance_name else ""
+        self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}{title_balance}")
         self.setMinimumSize(QSize(1300, 600))
         
-        self.mytable = QTableWidget(2,4)
-        self.mytable.setHorizontalHeaderItem(0,\
-                QTableWidgetItem("run"))
-        self.mytable.setHorizontalHeaderItem(1,\
-                QTableWidgetItem("title"))
-        self.mytable.setHorizontalHeaderItem(2,\
-                QTableWidgetItem("mass/mg"))
-        self.mytable.setHorizontalHeaderItem(3,\
-                QTableWidgetItem("unc/mg"))
+        self._tab_balances = []
+        self._tab_tables = []
+        self._populated = set()
+        self._last_tab_index = 0
+        self._loading_table = None
 
-        self.mytable.setColumnWidth(0, 100)
-        self.mytable.setColumnWidth(1, 200)
-        self.mytable.setColumnWidth(2, 120)
-        self.mytable.setColumnWidth(3, 70)
-        
+        self.balanceTabs = QTabWidget()
+        self.balanceTabs.setMinimumWidth(400)
+        self.balanceTabs.setMaximumWidth(600)
+        self.balanceTabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.balanceTabs.tabBar().customContextMenuRequested.connect(self._on_tab_context_menu)
+        self.balanceTabs.tabBar().tabBarClicked.connect(self._on_tab_bar_clicked)
+        self._build_tabs()
 
-        self.mytable.setFixedWidth(400)
-        self.mytable.setAlternatingRowColors(True)
-        self.mytable.setSelectionBehavior(QTableWidget.SelectRows)
-        self.mytable.verticalHeader().setVisible(False)
         self.Brefresh = QPushButton("Reload")
         
         ### The plot windows
@@ -234,17 +336,17 @@ class MainWindow(QMainWindow):
         self.rbDrop0     = QRadioButton('drop 0')
         self.rbDrop1     = QRadioButton('drop 1')
         self.rbDrop2     = QRadioButton('drop 2')
-        self.rbDrop0.setChecked(True)
         self.rgDrop      = QButtonGroup()
         self.rgDrop.addButton(self.rbDrop0, 0)
         self.rgDrop.addButton(self.rbDrop1, 1)
         self.rgDrop.addButton(self.rbDrop2, 2)
         self.sbOrder     = QSpinBox()
         self.sbMass      = QDoubleSpinBox()
-        self.sbOrder.setValue(6)
         self.sbOrder.setMinimum(1)
         self.sbOrder.setMaximum(10)
-        self.cbUseSync.setChecked(False)
+        self.sbOrder.setValue(cfg.fit_order)
+        self.cbUseSync.setChecked(cfg.use_sinc)
+        self.rgDrop.button(max(0, min(2, cfg.drop_n))).setChecked(True)
         self.cbExc3sig.setChecked(True)
       
         self.sbMass.setMinimumWidth(100)
@@ -365,7 +467,7 @@ class MainWindow(QMainWindow):
         vlayout2.addLayout(hlayout2)
         vlayout2.addWidget(self.tabWidget)
 
-        vlayout1.addWidget(self.mytable)
+        vlayout1.addWidget(self.balanceTabs)
         vlayout1.addWidget(self.Brefresh)
 
         hlayout2.addWidget(QLabel("order"))
@@ -380,10 +482,11 @@ class MainWindow(QMainWindow):
         hlayout2.addItem(hSpacer)
      
         self.setCentralWidget(widget)
+        self._update_sblabel()
         QTimer.singleShot(0, self.loadTable)
 
-        self.mytable.clicked.connect(self.on_table_clicked)
         self.Brefresh.clicked.connect(self.loadTable)
+        self.balanceTabs.currentChanged.connect(self._on_tab_changed)
         self.cbShowVolt.clicked.connect(self.plotForce)
         self.cbUseSync.clicked.connect(self.recalcvelo)
         self.rgDrop.buttonClicked.connect(self.recalcvelo)
@@ -392,6 +495,9 @@ class MainWindow(QMainWindow):
         self.tabWidget.tabs.currentChanged.connect(self.replot)
         self.sbOrder.valueChanged.connect(self.recalcvelo)
         self.sbMass.valueChanged.connect(self.gotmassval)
+        self.sbOrder.valueChanged.connect(self._save_ui_settings)
+        self.cbUseSync.clicked.connect(self._save_ui_settings)
+        self.rgDrop.buttonClicked.connect(self._save_ui_settings)
         
 
     def appendDiag(self, text):
@@ -403,82 +509,446 @@ class MainWindow(QMainWindow):
         connection = sqlite3.connect('k2viewer.db')
         cursor = connection.cursor()
         cursor.execute("""
-                       CREATE TABLE k2data (run TEXT UNIQUE, value FLOAT,
-                    uncertainty FLOAT, title TEXT, time TIMESTAMP, airdens FLOAT)""")
-                       
+            CREATE TABLE k2data (run TEXT, balance TEXT, value FLOAT,
+            uncertainty FLOAT, title TEXT, time TIMESTAMP, airdens FLOAT,
+            UNIQUE(run, balance))""")
+        connection.close()
+
+    def _migratedb(self):
+        connection = sqlite3.connect('k2viewer.db')
+        cursor = connection.cursor()
+        cols = [r[1] for r in cursor.execute("PRAGMA table_info(k2data)").fetchall()]
+        if 'balance' not in cols:
+            cursor.execute("ALTER TABLE k2data ADD COLUMN balance TEXT")
+            connection.commit()
         connection.close()
 
 
 
-    def _prompt_datapath(self):
-        QMessageBox.warning(self, 'Data path not found',
-            f'The configured data path does not exist:\n\n{self.bd}\n\n'
-            'Please select the data directory.')
-        path = QFileDialog.getExistingDirectory(self, 'Select data directory', self.bd)
-        if path:
+    @staticmethod
+    def _find_dataroot(path):
+        """Return the directory that contains YYMM (4-digit) subfolders.
+
+        Resolution order:
+          1. The selected path itself.
+          2. A 'data' subdirectory of the selected path.
+          3. Walk up toward the root (up to 5 levels).
+        Falls back to the original path if nothing is found.
+        """
+        def _has_yymm(d):
+            try:
+                return any(f.is_dir() and len(f.name) == 4 and f.name.isdigit()
+                           for f in os.scandir(d))
+            except Exception:
+                return False
+
+        p = os.path.abspath(path)
+
+        if _has_yymm(p):
+            return p
+
+        data_sub = os.path.join(p, 'data')
+        if os.path.isdir(data_sub) and _has_yymm(data_sub):
+            return data_sub
+
+        parent = p
+        for _ in range(5):
+            parent = os.path.dirname(parent)
+            if parent == os.path.dirname(parent):
+                break
+            if _has_yymm(parent):
+                return parent
+
+        return path
+
+    def _reset_display(self):
+        if self._table_thread and self._table_thread.isRunning():
+            self._table_loader.abort()
+            self._table_thread.quit()
+            self._table_thread.wait()
+        self._populated.clear()
+        for t in self._tab_tables:
+            t.clearContents()
+            t.setRowCount(0)
+        kda.clear()
+        self.idle = True
+        self.calcrow = -1
+        self.runid = ''
+        self.sbMass.clear()
+        for ax in [self.mplfor.canvas.ax1, self.mplfor.canvas.ax2]:
+            ax.clear(); ax.figure.canvas.draw()
+        for ax in [self.mplenv.canvas.ax1, self.mplenv.canvas.ax2,
+                   self.mplenv.canvas.ax3, self.mplenv.canvas.ax4]:
+            ax.clear(); ax.figure.canvas.draw()
+        for widget in [self.mplvel, self.mplmass, self.mplprofile]:
+            widget.canvas.ax1.clear(); widget.canvas.ax1.figure.canvas.draw()
+
+    # --------------------------------------------------------- tab context menu
+    def _on_tab_context_menu(self, pos):
+        if self._check_busy():
+            return
+        idx = self.balanceTabs.tabBar().tabAt(pos)
+        if idx < 0 or idx >= len(self._tab_balances):
+            return
+        menu = QMenu(self)
+        act_rename = menu.addAction('Rename')
+        act_delete = menu.addAction('Delete')
+        act_chdir  = menu.addAction('Change Directory...')
+        action = menu.exec_(self.balanceTabs.tabBar().mapToGlobal(pos))
+        if action == act_rename:
+            self._tab_start_rename(idx)
+        elif action == act_delete:
+            self._tab_delete(idx)
+        elif action == act_chdir:
+            self._tab_change_directory(idx)
+
+    def _tab_start_rename(self, tab_idx):
+        tab_bar = self.balanceTabs.tabBar()
+        old_name = self._tab_balances[tab_idx]
+        rect = tab_bar.tabRect(tab_idx)
+        editor = QLineEdit(old_name, tab_bar)
+        editor.setGeometry(rect)
+        editor.selectAll()
+        editor.show()
+        editor.setFocus()
+
+        committed = [False]
+
+        def commit():
+            if committed[0]:
+                return
+            committed[0] = True
+            new_name = editor.text().strip()
+            editor.deleteLater()
+            if not new_name or new_name == old_name:
+                return
+            if '[' in new_name or ']' in new_name:
+                QMessageBox.warning(self, 'Invalid name', 'Balance name may not contain [ or ] characters.')
+                return
+            if new_name in self._tab_balances:
+                QMessageBox.warning(self, 'Already exists', f'A balance named "{new_name}" already exists.')
+                return
+            AppConfig.rename_balance(old_name, new_name)
+            if os.path.isfile('k2viewer.db'):
+                conn = sqlite3.connect('k2viewer.db')
+                conn.execute("UPDATE k2data SET balance=? WHERE balance=?", (new_name, old_name))
+                conn.commit()
+                conn.close()
+            self._tab_balances[tab_idx] = new_name
+            self.balanceTabs.setTabText(tab_idx, new_name)
+            if old_name in self._populated:
+                self._populated.discard(old_name)
+                self._populated.add(new_name)
+            if self.balance_name == old_name:
+                self.balance_name = new_name
+                self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}  [{new_name}]")
+            self._populated.discard(new_name)
+            if self.balanceTabs.currentIndex() == tab_idx:
+                self._start_table_load(tab_idx)
+
+        def cancel():
+            if not committed[0]:
+                editor.deleteLater()
+
+        editor.returnPressed.connect(commit)
+        editor.editingFinished.connect(cancel)
+
+    def _tab_delete(self, tab_idx):
+        name = self._tab_balances[tab_idx]
+        reply = QMessageBox.warning(
+            self, 'Confirm Delete',
+            f'Delete balance "{name}"?\n\nThis will remove it from the config and '
+            f'delete all its database entries. This cannot be undone.',
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
+        if reply != QMessageBox.Yes:
+            return
+        AppConfig.delete_balance(name)
+        if os.path.isfile('k2viewer.db'):
+            conn = sqlite3.connect('k2viewer.db')
+            conn.execute("DELETE FROM k2data WHERE balance=?", (name,))
+            conn.commit()
+            conn.close()
+        self._tab_balances.pop(tab_idx)
+        self._tab_tables.pop(tab_idx)
+        self._populated.discard(name)
+
+        self.balanceTabs.blockSignals(True)
+        self.balanceTabs.removeTab(tab_idx)
+        if not self._tab_balances:
+            self.balanceTabs.blockSignals(False)
+            self.balance_name = ''
+            self.bd = ''
+            self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}")
+            self._update_sblabel()
+            return
+        new_idx = min(max(0, tab_idx - 1), len(self._tab_balances) - 1)
+        self.balanceTabs.setCurrentIndex(new_idx)
+        self.balanceTabs.blockSignals(False)
+        self._last_tab_index = new_idx
+        new_balance = self._tab_balances[new_idx]
+        new_bd = AppConfig.get_all_balances().get(new_balance, '')
+        self.balance_name = new_balance
+        self.bd = new_bd
+        self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}  [{new_balance}]")
+        AppConfig.save(new_balance, new_bd, AppConfig().loglevel)
+        if new_balance not in self._populated:
+            self._start_table_load(new_idx)
+
+    def _tab_change_directory(self, tab_idx):
+        name = self._tab_balances[tab_idx]
+        balances = AppConfig.get_all_balances()
+        current_path = balances.get(name, '')
+        start = current_path if os.path.isdir(current_path) else os.path.expanduser('~')
+        path = QFileDialog.getExistingDirectory(
+            self, f'Select new data directory for "{name}"', start)
+        if not path:
+            return
+        path = self._find_dataroot(path)
+        AppConfig.update_datapath(name, path)
+        self._populated.discard(name)
+        if name == self.balance_name:
             self.bd = path
-            AppConfig.save_datapath(path)
+            self._reset_display()
+        if self.balanceTabs.currentIndex() == tab_idx:
+            self._start_table_load(tab_idx)
+
+    def _menu_add_balance(self):
+        start = self.bd if os.path.isdir(self.bd) else os.path.expanduser('~')
+        path = QFileDialog.getExistingDirectory(self, 'Select data directory for new balance', start)
+        if not path:
+            return
+        path = self._find_dataroot(path)
+
+        hint = ('...' + path[-40:]) if len(path) > 40 else path
+        existing = AppConfig.get_all_balances()
+        while True:
+            name, ok = QInputDialog.getText(self, 'Add Balance',
+                                            f'Data path: {hint}\n\nEnter a name for this balance\n(no [ or ] characters allowed):',
+                                            text='Balance1')
+            if not ok:
+                return
+            name = name.strip()
+            if not name:
+                QMessageBox.warning(self, 'Invalid name', 'Balance name cannot be empty.')
+                continue
+            if '[' in name or ']' in name:
+                QMessageBox.warning(self, 'Invalid name', 'Balance name may not contain [ or ] characters.')
+                continue
+            if name in existing:
+                QMessageBox.warning(self, 'Already exists', f'A balance named "{name}" already exists.')
+                continue
+            break
+
+        AppConfig.save(name, path, AppConfig().loglevel)
+        new_idx = self._add_tab(name)
+        self.balanceTabs.blockSignals(True)
+        self.balanceTabs.setCurrentIndex(new_idx)
+        self.balanceTabs.blockSignals(False)
+        self._last_tab_index = new_idx
+        self.balance_name = name
+        self.bd = path
+        self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}  [{name}]")
+        self._start_table_load(new_idx)
+        self._update_sblabel()
+
+    def _save_ui_settings(self, *_):
+        AppConfig.save_ui_settings(
+            int(self.sbOrder.value()),
+            self.cbUseSync.isChecked(),
+            self._dropN())
+
+    def _prompt_datapath(self):
+        if not self.bd:
+            msg = 'No balance configured yet.\n\nPlease select its data directory.'
+        else:
+            msg = (f'The configured data path does not exist:\n\n{self.bd}\n\n'
+                   'Please select the data directory.')
+        QMessageBox.information(self, 'Balance setup', msg)
+
+        start = self.bd if os.path.isdir(self.bd) else os.path.expanduser('~')
+        path = QFileDialog.getExistingDirectory(self, 'Select data directory', start)
+        if not path:
+            return
+        path = self._find_dataroot(path)
+
+        hint = ('...' + path[-40:]) if len(path) > 40 else path
+        existing = AppConfig.get_all_balances()
+        while True:
+            name, ok = QInputDialog.getText(self, 'Balance name',
+                                            f'Data path: {hint}\n\nEnter a name for this balance\n(no [ or ] characters allowed):',
+                                            text=self.balance_name or 'Balance1')
+            if not ok:
+                return
+            name = name.strip()
+            if not name:
+                QMessageBox.warning(self, 'Invalid name', 'Balance name cannot be empty.')
+                continue
+            if '[' in name or ']' in name:
+                QMessageBox.warning(self, 'Invalid name', 'Balance name may not contain [ or ] characters.')
+                continue
+            if name in existing and name != self.balance_name:
+                QMessageBox.warning(self, 'Already exists', f'A balance named "{name}" already exists.')
+                continue
+            break
+
+        self.bd = path
+        self.balance_name = name
+        AppConfig.save_datapath(name, path)
+
+    # ------------------------------------------------------------------ tabs --
+    def _make_table(self):
+        t = QTableWidget(0, 4)
+        t.setHorizontalHeaderItem(0, QTableWidgetItem("run"))
+        t.setHorizontalHeaderItem(1, QTableWidgetItem("title"))
+        t.setHorizontalHeaderItem(2, QTableWidgetItem("mass/mg"))
+        t.setHorizontalHeaderItem(3, QTableWidgetItem("unc/ug"))
+        t.setColumnWidth(0, 80)
+        t.setColumnWidth(2, 80)
+        t.setColumnWidth(3, 80)
+        t.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        t.setAlternatingRowColors(True)
+        t.setSelectionBehavior(QTableWidget.SelectRows)
+        t.verticalHeader().setVisible(False)
+        t.clicked.connect(self.on_table_clicked)
+        return t
+
+    def _build_tabs(self):
+        balances = AppConfig.get_all_balances()
+        active = self.balance_name
+        active_idx = 0
+        for i, (name, _) in enumerate(balances.items()):
+            table = self._make_table()
+            self.balanceTabs.addTab(table, name)
+            self._tab_balances.append(name)
+            self._tab_tables.append(table)
+            if name == active:
+                active_idx = i
+        self.balanceTabs.addTab(QWidget(), '+')
+        self.balanceTabs.blockSignals(True)
+        self.balanceTabs.setCurrentIndex(active_idx)
+        self.balanceTabs.blockSignals(False)
+        self._last_tab_index = active_idx
+
+    def _add_tab(self, name):
+        table = self._make_table()
+        plus_idx = self.balanceTabs.count() - 1
+        self.balanceTabs.insertTab(plus_idx, table, name)
+        self._tab_balances.insert(plus_idx, name)
+        self._tab_tables.insert(plus_idx, table)
+        return plus_idx  # new tab's index
+
+    def _current_table(self):
+        idx = self.balanceTabs.currentIndex()
+        if idx < len(self._tab_tables):
+            return self._tab_tables[idx]
+        return None
+
+    def _set_table_loading(self, loading):
+        self._table_loading = loading
+        self.Brefresh.setEnabled(not loading)
+
+    def _check_busy(self):
+        """Return True and show a status message if any background task is running."""
+        if self._table_loading:
+            self.statusBar.showMessage('Wait until table is populated', 3000)
+            return True
+        if not self.idle:
+            self.statusBar.showMessage('Wait until run is loaded', 3000)
+            return True
+        return False
+
+    def _update_sblabel(self):
+        if self._tab_balances:
+            self.sblabel.setText('Click on a run')
+        else:
+            self.sblabel.setText('Click on + to add a balance with data directory')
+
+    def _on_tab_bar_clicked(self, index):
+        if self._check_busy():
+            return
+        if index == self.balanceTabs.count() - 1:
+            self._menu_add_balance()
+
+    def _on_tab_changed(self, index):
+        if index >= len(self._tab_balances):
+            return  # "+" tab
+        if self._check_busy():
+            self.balanceTabs.blockSignals(True)
+            self.balanceTabs.setCurrentIndex(self._last_tab_index)
+            self.balanceTabs.blockSignals(False)
+            return
+        self._last_tab_index = index
+        balance = self._tab_balances[index]
+        balances = AppConfig.get_all_balances()
+        self.balance_name = balance
+        self.bd = balances.get(balance, '')
+        self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}  [{balance}]")
+        AppConfig.save(balance, self.bd, AppConfig().loglevel)
+        if balance not in self._populated:
+            self._start_table_load(index)
+
+    # --------------------------------------------------------------- loading --
+    def _start_table_load(self, tab_index):
+        if tab_index >= len(self._tab_balances):
+            return
+        balance = self._tab_balances[tab_index]
+        balances = AppConfig.get_all_balances()
+        bd = balances.get(balance, '')
+        if not bd or not os.path.isdir(bd):
+            self.statusBar.showMessage(f'Data path not configured for {balance}', 4000)
+            return
+
+        table = self._tab_tables[tab_index]
+        table.clearContents()
+        table.setRowCount(0)
+
+        if not os.path.isfile('k2viewer.db'):
+            self.createdb()
+        self._migratedb()
+
+        if self._table_thread and self._table_thread.isRunning():
+            self._table_loader.abort()
+            self._table_thread.quit()
+            self._table_thread.wait()
+
+        self._loading_table = table
+        self._set_table_loading(True)
+        self._table_loader = TableLoader(bd, balance, list(balances.keys()))
+        self._table_thread = QThread()
+        self._table_loader.moveToThread(self._table_thread)
+        self._table_loader.activeRow.connect(self._on_table_active_row)
+        self._table_loader.finished.connect(self._table_thread.quit)
+        self._table_loader.finished.connect(lambda: self._populated.add(balance))
+        self._table_loader.finished.connect(lambda: self._set_table_loading(False))
+        self._table_thread.started.connect(self._table_loader.run)
+        self._table_thread.start()
 
     def loadTable(self):
-         if not os.path.isdir(self.bd):
-             self._prompt_datapath()
-         if not os.path.isdir(self.bd):
-             self.statusBar.showMessage(f'Data path not configured: {self.bd}', 0)
-             return
-         c = k2dataset.MyConfig()
-         self.mytable.clearContents()
-         self.mytable.setRowCount(0)
-         if os.path.isfile('k2viewer.db')==False:
-             self.createdb()
-             
-         connection = sqlite3.connect('k2viewer.db')
-         cursor = connection.cursor()
+        if self._check_busy():
+            return
+        idx = self.balanceTabs.currentIndex()
+        if idx >= len(self._tab_balances):
+            return
+        self._populated.discard(self._tab_balances[idx])
+        self._start_table_load(idx)
 
-  
-         for s1 in sorted([ f.path for f in os.scandir(self.bd) \
-                           if f.is_dir() ],reverse=True):
-            yymm=os.path.split(s1)[-1]
-            if len(yymm)==4:
-                for s2 in sorted([ f.path for f in os.scandir(s1)\
-                                  if f.is_dir() ],reverse=True):
-                    day=os.path.split(s2)[-1]
-                    if len(day)==2:
-                        for s3 in sorted([ f.path for f in os.scandir(s2)\
-                                          if f.is_dir() ],reverse=True):
-                            if os.path.isfile(os.path.join(s3,'config.ini'))==False:
-                                continue
-                            try:
-                                c.setbd0(s3)
-                                letter=os.path.split(s3)[-1]
-                                if len(letter)==1:
-                                    run =yymm+day+letter
-                                    row_number = self.mytable.rowCount()
-                                    self.mytable.insertRow(row_number)
-                                    self.mytable.setItem(row_number,0,\
-                                    QTableWidgetItem(str(run)))
-                                    self.mytable.setItem(row_number,1,QTableWidgetItem(str(c.title)))
-                                    dbentry = cursor.execute(
-                                        "SELECT run,value,uncertainty,title FROM k2data WHERE run=?",
-                                        (run,)).fetchall()
-                                    if len(dbentry)==0:
-                                        continue
-                                    dbentry=dbentry[0]
-                                    if dbentry[1]>-9e96:
-                                        nitem =QTableWidgetItem('{0:,.4f}'.format(dbentry[1]) )
-                                    else:
-                                        nitem =QTableWidgetItem('n/a')
-                                    nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
-                                    self.mytable.setItem(row_number,2,nitem)
-                                    if dbentry[2]>-9e96:
-                                        nitem =QTableWidgetItem('{0:6.4f}'.format(dbentry[2]))
-                                    else:
-                                        nitem =QTableWidgetItem('n/a')
-                                    nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
-                                    self.mytable.setItem(row_number,3,nitem)
-                            except Exception as e:
-                                print(f'Problem reading {s3}: {e}')
-
-         connection.close()
+    @pyqtSlot(str, str, str, str, str)
+    def _on_table_active_row(self, balance, run, title, mass_str, unc_str):
+        t = self._loading_table
+        if t is None:
+            return
+        row = t.rowCount()
+        t.insertRow(row)
+        t.setItem(row, 0, QTableWidgetItem(run))
+        t.setItem(row, 1, QTableWidgetItem(title))
+        if mass_str:
+            nitem = QTableWidgetItem(mass_str)
+            nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
+            t.setItem(row, 2, nitem)
+        if unc_str:
+            nitem = QTableWidgetItem(unc_str)
+            nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
+            t.setItem(row, 3, nitem)
          
     def plotForce(self):
         if kda.myOffs.maxGrpMem<0:
@@ -748,6 +1218,17 @@ class MainWindow(QMainWindow):
         
 
 
+    def _show_update_dialog(self, latest, download_url):
+        import webbrowser
+        reply = QMessageBox.question(
+            self,
+            "Update available",
+            f"A new version is available: v{latest}\nYou have: v{APP_VERSION}\n\nOpen the download page?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            webbrowser.open(download_url)
+
     def _dropN(self):
         return self.rgDrop.checkedId()
 
@@ -955,17 +1436,19 @@ class MainWindow(QMainWindow):
         title = title.replace('"', '\'')
         nitem =QTableWidgetItem('{0:,.4f}'.format(mass) )
         nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
-        self.mytable.setItem(self.calcrow,2,nitem)
-        nitem =QTableWidgetItem('{0:6.4f}'.format(massunc))
-        nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
-        self.mytable.setItem(self.calcrow,3,nitem)
-        self.mytable.setItem(self.calcrow,1,QTableWidgetItem(title))
+        t = self._current_table()
+        if t:
+            t.setItem(self.calcrow, 2, nitem)
+            nitem = QTableWidgetItem('{0:6.4f}'.format(massunc))
+            nitem.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
+            t.setItem(self.calcrow, 3, nitem)
+            t.setItem(self.calcrow, 1, QTableWidgetItem(title))
 
         connection = sqlite3.connect('k2viewer.db')
         cursor = connection.cursor()
         cursor.execute(
-            "REPLACE INTO k2data (run,value,uncertainty,title) VALUES (?,?,?,?)",
-            (self.runid, mass, massunc, title))
+            "REPLACE INTO k2data (run,balance,value,uncertainty,title) VALUES (?,?,?,?,?)",
+            (self.runid, self.balance_name, mass, massunc, title))
         connection.commit()
         connection.close()    
    
@@ -998,12 +1481,18 @@ class MainWindow(QMainWindow):
             
         
 
-    def on_table_clicked(self,item):
+    def on_table_clicked(self, item):
+        if self._table_loading:
+            self.statusBar.showMessage('Wait until table is populated', 3000)
+            return
+        t = self._current_table()
+        if t is None:
+            return
         if self.idle:
-            self.idle=False
+            self.idle = False
             self.sbMass.clear()
             self.calcrow = item.row()
-            self.runid =self.mytable.item(item.row(), 0).text()
+            self.runid = t.item(item.row(), 0).text()
             filePath = os.path.join(self.bd,self.runid[0:4],self.runid[4:6],self.runid[6])
             
             kda.clear()
@@ -1310,6 +1799,36 @@ try:
     if _splash:
         _splash.close()
     _log('window shown — entering event loop')
+
+    def _parse_version(v):
+        parts = (v.strip().split('.') + ['0', '0', '0'])[:3]
+        try:
+            return tuple(int(x) for x in parts)
+        except ValueError:
+            return (0, 0, 0)
+
+    def _check_for_update():
+        import urllib.request, json
+        try:
+            url = "https://api.github.com/repos/schlammis/k2p2viewer/releases/latest"
+            with urllib.request.urlopen(url, timeout=5) as r:
+                data = json.loads(r.read())
+            latest = data["tag_name"].lstrip("v")
+            gh = _parse_version(latest)
+            me = _parse_version(APP_VERSION)
+            if gh > me:
+                print(f"Update available: v{latest}  (you have v{APP_VERSION})")
+                if (gh[0], gh[1]) > (me[0], me[1]):
+                    window.updateAvailable.emit(latest, data['html_url'])
+                else:
+                    print(f"Patch update only — download at: {data['html_url']}")
+            else:
+                print(f"Version check: up to date (v{APP_VERSION})")
+        except Exception as e:
+            print(f"Version check failed: {e}")
+    
+    threading.Thread(target=_check_for_update, daemon=True).start()
+
     app.exec()
     _log('event loop exited normally')
 except Exception:

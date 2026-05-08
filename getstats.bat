@@ -1,0 +1,1 @@
+powershell -File ".\getstats.ps1"

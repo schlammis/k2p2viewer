@@ -11,4 +11,6 @@ pyinstaller ^
   --exclude-module PySide2 ^
   .\src\k2p2viewer.pyw
 
-copy config.ini dist\k2p2viewer\config.ini
+copy version.txt dist\k2p2viewer\version.txt
+
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" k2p2viewer.iss
