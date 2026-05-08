@@ -411,6 +411,7 @@ class MainWindow(QMainWindow):
         self.cbMvsZ        = QCheckBox()
         self.cbExc3sig     = QCheckBox()
         self.cbIgnoreCache = QCheckBox()
+        self.cbShowPpm     = QCheckBox()
         self.rbDrop0     = QRadioButton('drop 0')
         self.rbDrop1     = QRadioButton('drop 1')
         self.rbDrop2     = QRadioButton('drop 2')
@@ -572,6 +573,7 @@ class MainWindow(QMainWindow):
         self.rgDrop.buttonClicked.connect(self.recalcvelo)
         self.cbMvsZ.clicked.connect(self.plotMass)
         self.cbExc3sig.clicked.connect(self.plotMass)
+        self.cbShowPpm.clicked.connect(self.plotMass)
         self.tabWidget.tabs.currentChanged.connect(self.replot)
         self.sbOrder.valueChanged.connect(self.recalcvelo)
         self.sbMass.valueChanged.connect(self.gotmassval)
@@ -1213,15 +1215,18 @@ class MainWindow(QMainWindow):
              self.mplmass.canvas.ax1.set_xlim(be,en)
             
         be,en =self.mplmass.canvas.ax1.get_ylim()
-            
-        #me =0.5*(be+en)
+
         me = mean
         if kda.hasRefMass:
-            me =kda.refMass
-        self.mplmass.canvas.bx1.set_ylim((be-me)*1e3,(en-me)*1e3)
-        self.mplmass.canvas.ax1.set_xlabel(tla)    
+            me = kda.refMass
+        if self.cbShowPpm.isChecked() and me != 0:
+            self.mplmass.canvas.bx1.set_ylim((be-me)/me*1e6,(en-me)/me*1e6)
+            self.mplmass.canvas.bx1.set_ylabel('deviation  /ppm')
+        else:
+            self.mplmass.canvas.bx1.set_ylim((be-me)*1e3,(en-me)*1e3)
+            self.mplmass.canvas.bx1.set_ylabel('deviation  /\u00B5g')
+        self.mplmass.canvas.ax1.set_xlabel(tla)
         self.mplmass.canvas.ax1.set_ylabel('mass /mg')
-        self.mplmass.canvas.bx1.set_ylabel('deviation  /\u00B5g')
         self.mplmass.canvas.bx1.ticklabel_format(useOffset=False)
         self.mplmass.canvas.ax1.ticklabel_format(useOffset=False)
         self.mplmass.canvas.draw() 
@@ -1677,10 +1682,14 @@ class MyTabWidget(QWidget):
         l4a.setText("mass")
         h1 = QHBoxLayout()
 
-        h1.addWidget(parent.cbExc3sig) #parent.cbMvsZ)
+        h1.addWidget(parent.cbExc3sig)
         h1.addWidget(QLabel('Excl. outlier'))
+        h2 = QHBoxLayout()
+        h2.addWidget(parent.cbShowPpm)
+        h2.addWidget(QLabel('show ppm'))
         tabMassctrl.addWidget(l4a)
-        tabMassctrl.addLayout(h1) 
+        tabMassctrl.addLayout(h1)
+        tabMassctrl.addLayout(h2) 
 
         tabMassctrl.addWidget(l4b)
         tabMassctrl.addWidget(parent.sbMass)

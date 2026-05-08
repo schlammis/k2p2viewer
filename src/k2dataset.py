@@ -307,7 +307,8 @@ class Mass:
             of_d =self.of_d[ofix,:]
             on_d =self.on_d[onix,:]
 
-            for a1,b,a2 in zip(of_d[:-1],on_d,of_d[1:]):
+            beg = dropfirst
+            for a1,b,a2 in zip(of_d[beg:-1],on_d[beg:],of_d[beg+1:]):
                 ta1=a1[0]
                 tb=b[0]
                 ta2=a2[0]
@@ -325,7 +326,7 @@ class Mass:
             ofix = np.where(self.ofa_d[:,4]==g)[0]
             onix = np.where(self.on_d[:,4]==g)[0]
             of_d =self.ofa_d[ofix,:]
-            on_d =self.on_d[onix,:]
+            on_d =self.on_d[onix,:][dropfirst:]
 
             for a,b in zip(of_d,on_d):
                 t = 0.5*(b[0]+a[0])
@@ -340,9 +341,6 @@ class Mass:
                 unc =np.sqrt(a[3]**2+b[3]**2)
                 grp =b[4]
                 diffs.append(np.r_[t,z,di,unc,grp])
-
-        if dropfirst > 0:
-            diffs = diffs[dropfirst:]
         if len(diffs) == 0:
             raise ValueError(
                 f'No valid mass differences after drop={dropfirst} — '
@@ -385,7 +383,7 @@ class MyConfig:
         
     def setbd0(self,bd0):
         self.bd0=bd0
-        self.config = configparser.ConfigParser()
+        self.config = configparser.ConfigParser(interpolation=None)
         self.config.read(os.path.join(bd0,'config.ini'))
         try:
             verstr= self.config['Measurement']['SoftwareVersion']
