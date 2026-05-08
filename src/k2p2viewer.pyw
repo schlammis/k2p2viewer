@@ -27,6 +27,8 @@ except Exception as e:
 import threading
 import traceback
 import ctypes
+import gzip
+import pickle
 import xlwt,xlrd,xlutils.copy
 import datetime
 from shutil import copyfile
@@ -104,7 +106,7 @@ _splash_msg('Loading dataset...')
 import k2dataset
 _log('k2dataset OK')
 _splash_msg('Loading tools...')
-import k2tools
+import k2toolsnew as k2tools
 _log('k2tools OK')
 _splash_msg('Starting application...')
 
@@ -175,6 +177,17 @@ class TableLoader(QObject):
         finally:
             self.finished.emit()
 
+    @staticmethod
+    def _write_run_error(run_dir, reason):
+        try:
+            ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            with open(os.path.join(run_dir, 'k2readerror.dat'), 'w') as f:
+                f.write(f'k2p2viewer v{APP_VERSION}  {ts}\n')
+                f.write(f'{reason}\n')
+            print(f'[error] wrote k2readerror.dat in {run_dir}: {reason}')
+        except Exception as we:
+            print(f'[error] could not write k2readerror.dat: {we}')
+
     def _load(self):
         c = k2dataset.MyConfig()
         conn = sqlite3.connect('k2viewer.db')
@@ -195,13 +208,16 @@ class TableLoader(QObject):
                     for s3 in sorted([f.path for f in os.scandir(s2) if f.is_dir()], reverse=True):
                         if self._abort:
                             return
+                        letter = os.path.split(s3)[-1]
+                        if len(letter) != 1:
+                            continue
+                        if os.path.isfile(os.path.join(s3, 'k2readerror.dat')):
+                            continue
                         if not os.path.isfile(os.path.join(s3, 'config.ini')):
+                            self._write_run_error(s3, 'No config.ini found in run directory')
                             continue
                         try:
                             c.setbd0(s3)
-                            letter = os.path.split(s3)[-1]
-                            if len(letter) != 1:
-                                continue
                             run = yymm + day + letter
                             title = str(c.title)
                             rows = cur.execute(
@@ -215,6 +231,7 @@ class TableLoader(QObject):
                                 mass_str = unc_str = ''
                             self.activeRow.emit(self.balance_name, run, title, mass_str, unc_str)
                         except Exception as e:
+                            self._write_run_error(s3, f'Error reading run: {e}')
                             print(f'Problem reading {s3}: {e}')
 
             if not self._abort:
@@ -237,42 +254,102 @@ class Worker(QObject):
     finished = pyqtSignal()
     intReady = pyqtSignal(int,int,int)
 
-    def __init__(self,excl3,order,usesinc,dropfirst=0):
+    def __init__(self,excl3,order,usesinc,dropfirst=0,ignore_cache=False):
         super().__init__()
         self.order =order
         self.excl3=excl3
         self.usesinc = usesinc
         self.dropfirst = dropfirst
+        self.ignore_cache = ignore_cache
 
     @pyqtSlot()
     def procCounter(self): # A slot takes no params
         self.intReady.emit(0,0,0)
-        maxgrp = kda.totGrps
-        kda.readEnv()
-        self.intReady.emit(2,0,0) 
-        Npl = int((maxgrp+1)//20)
-        if Npl==0: Npl=1
-        for k in range(maxgrp+1):
-            kda.myVelos.readGrp(k,Vmul=1000)
-            kda.myOns.readGrp(k)
-            kda.myOffs.readGrp(k)
-            if k>=1 and k%Npl==0:
-                kda.myVelos.fitMe(order=self.order,usesinc=self.usesinc)
-                kda.myOns.aveForce()
-                kda.myOffs.aveForce()
-            if k>=1 and k%Npl==0:
-                kda.calcMass(dropfirst=self.dropfirst)
-            if k>Npl:
-                self.intReady.emit(1,k+1,maxgrp+1)
+        cache_path = os.path.join(kda.bd0, 'k2dict.pkl')
+        if not self.ignore_cache and _load_run_cache(cache_path):
+            self.intReady.emit(3,0,0)
+        else:
+            maxgrp = kda.totGrps
+            kda.readEnv()
+            self.intReady.emit(2,0,0)
+            Npl = int((maxgrp+1)//20)
+            if Npl==0: Npl=1
+            for k in range(maxgrp+1):
+                kda.myVelos.readGrp(k,Vmul=1000)
+                kda.myOns.readGrp(k)
+                kda.myOffs.readGrp(k)
+                if k>=1 and k%Npl==0:
+                    kda.myVelos.fitMe(order=self.order,usesinc=self.usesinc)
+                    kda.myOns.aveForce()
+                    kda.myOffs.aveForce()
+                if k>=1 and k%Npl==0:
+                    kda.calcMass(dropfirst=self.dropfirst)
+                if k>Npl:
+                    self.intReady.emit(1,k+1,maxgrp+1)
+            _save_run_cache(cache_path)
         kda.myVelos.fitMe(order=self.order,usesinc=self.usesinc)
         kda.myOns.aveForce()
         kda.myOffs.aveForce()
         kda.calcMass(excl3=self.excl3,dropfirst=self.dropfirst)
-            
-        self.intReady.emit(99,0,0) 
-        
+
+        self.intReady.emit(99,0,0)
+
         self.finished.emit()
         
+def _save_run_cache(path):
+    try:
+        d = {
+            'app_version':      APP_VERSION,
+            'velos_adata':      np.array(kda.myVelos.adata),
+            'velos_maxGrpMem':  kda.myVelos.maxGrpMem,
+            'ons_data':         np.array(kda.myOns.data),
+            'ons_maxS':         kda.myOns.maxS,
+            'ons_maxgrp':       kda.myOns.maxgrp,
+            'ons_maxGrpMem':    kda.myOns.maxGrpMem,
+            'offs_data':        np.array(kda.myOffs.data),
+            'offs_maxS':        kda.myOffs.maxS,
+            'offs_maxgrp':      kda.myOffs.maxgrp,
+            'offs_maxGrpMem':   kda.myOffs.maxGrpMem,
+            'env_edata':        np.array(kda.myEnv.edata),
+            'env_hasEnv':       kda.myEnv.hasEnv,
+        }
+        with gzip.open(path, 'wb') as f:
+            pickle.dump(d, f, protocol=pickle.HIGHEST_PROTOCOL)
+        print(f'[cache] saved {path}')
+    except Exception as e:
+        print(f'[cache] save failed: {e}')
+
+
+def _load_run_cache(path):
+    if not os.path.isfile(path):
+        return False
+    try:
+        with gzip.open(path, 'rb') as f:
+            d = pickle.load(f)
+        cached_major = str(d.get('app_version', '')).split('.')[0]
+        current_major = str(APP_VERSION).split('.')[0]
+        if cached_major != current_major:
+            print(f'[cache] major version mismatch ({d.get("app_version")} vs {APP_VERSION}), ignoring')
+            return False
+        kda.myVelos.adata       = d['velos_adata']
+        kda.myVelos.maxGrpMem   = d['velos_maxGrpMem']
+        kda.myOns.data          = d['ons_data']
+        kda.myOns.maxS          = d['ons_maxS']
+        kda.myOns.maxgrp        = d['ons_maxgrp']
+        kda.myOns.maxGrpMem     = d['ons_maxGrpMem']
+        kda.myOffs.data         = d['offs_data']
+        kda.myOffs.maxS         = d['offs_maxS']
+        kda.myOffs.maxgrp       = d['offs_maxgrp']
+        kda.myOffs.maxGrpMem    = d['offs_maxGrpMem']
+        kda.myEnv.edata         = d['env_edata']
+        kda.myEnv.hasEnv        = d['env_hasEnv']
+        print(f'[cache] loaded {path}')
+        return True
+    except Exception as e:
+        print(f'[cache] load failed: {e}')
+        return False
+
+
 # Subclass QMainWindow to customize your application's main window
 class MainWindow(QMainWindow):
     updateAvailable = pyqtSignal(str, str)  # latest version, download url
@@ -329,10 +406,11 @@ class MainWindow(QMainWindow):
         
         ### check and spin boxes
         
-        self.cbShowVolt  = QCheckBox()
-        self.cbUseSync   = QCheckBox()
-        self.cbMvsZ      = QCheckBox()
-        self.cbExc3sig   = QCheckBox()
+        self.cbShowVolt    = QCheckBox()
+        self.cbUseSync     = QCheckBox()
+        self.cbMvsZ        = QCheckBox()
+        self.cbExc3sig     = QCheckBox()
+        self.cbIgnoreCache = QCheckBox()
         self.rbDrop0     = QRadioButton('drop 0')
         self.rbDrop1     = QRadioButton('drop 1')
         self.rbDrop2     = QRadioButton('drop 2')
@@ -477,6 +555,8 @@ class MainWindow(QMainWindow):
         hlayout2.addWidget(self.rbDrop0)
         hlayout2.addWidget(self.rbDrop1)
         hlayout2.addWidget(self.rbDrop2)
+        hlayout2.addWidget(self.cbIgnoreCache)
+        hlayout2.addWidget(QLabel('ignore cache'))
 
         hSpacer = QSpacerItem(20, 2, QSizePolicy.Expanding, QSizePolicy.Minimum)
         hlayout2.addItem(hSpacer)
@@ -973,18 +1053,23 @@ class MainWindow(QMainWindow):
         #     p2,=self.mplfor.canvas.bx1.plot(\
         #         kda.myOffs.data[:,0]*tmul,\
         #         kda.myOffs.data[:,2]-mof,'b.')
+        def _drop_first(adata, n):
+            if n == 0 or len(adata) == 0:
+                return adata
+            remaining = adata[n:]
+            return remaining if len(remaining) else adata
+
+        drop_n = self._dropN()
         if kda.myOns.adatalen>0:
-            _=self.mplfor.canvas.ax1.errorbar(
-                kda.myOns.adata[:,0]*tmul,\
-                kda.myOns.adata[:,2]*scale,\
-                kda.myOns.adata[:,7]*scale,\
-                    fmt='ro')           
+            d = _drop_first(kda.myOns.adata, drop_n)
+            if len(d):
+                _=self.mplfor.canvas.ax1.errorbar(
+                    d[:,0]*tmul, d[:,2]*scale, d[:,7]*scale, fmt='ro')
         if kda.myOffs.adatalen>0:
-            _=self.mplfor.canvas.ax2.errorbar(
-                kda.myOffs.adata[:,0]*tmul,\
-                kda.myOffs.adata[:,2]*scale,\
-                kda.myOffs.adata[:,7]*scale,\
-                    fmt='bs')
+            d = _drop_first(kda.myOffs.adata, drop_n)
+            if len(d):
+                _=self.mplfor.canvas.ax2.errorbar(
+                    d[:,0]*tmul, d[:,2]*scale, d[:,7]*scale, fmt='bs')
             
         self.mplfor.canvas.setsamexscale()
         mutex.unlock()
@@ -1073,6 +1158,8 @@ class MainWindow(QMainWindow):
         if kda.Mass==0:
             return
         kda.calcMass(excl3=self.cbExc3sig.isChecked(),dropfirst=self._dropN())
+        if kda.Mass==0:
+            return
         self.populateUnc()
         self.mplmass.canvas.ax1.clear()
         mutex.lock()
@@ -1464,6 +1551,9 @@ class MainWindow(QMainWindow):
         elif ix==2:
             self.progressBar.setValue(0)
             self.sblabel.setText('reading Environmentals')
+        elif ix==3:
+            self.progressBar.setValue(0)
+            self.sblabel.setText('Loading from cache...')
         elif ix==99:
             self.sblabel.setText('reading of {0} done'.format(kda.bd0))
             self.statusBar.showMessage('Data available',5000)
@@ -1474,9 +1564,11 @@ class MainWindow(QMainWindow):
                 self.WriteExcel()
             except Exception:
                 pass
+            self.replot()
+            self.idle=True
+            return
 
         self.replot()
-        self.idle=True
 #           
             
         
@@ -1502,7 +1594,8 @@ class MainWindow(QMainWindow):
             excl3=self.cbExc3sig.isChecked()
             dropfirst=self._dropN()
 
-            self.obj = Worker(excl3,order,usesinc,dropfirst)  # no parent!
+            self.obj = Worker(excl3,order,usesinc,dropfirst,
+                              ignore_cache=self.cbIgnoreCache.isChecked())  # no parent!
             self.thread = QThread()  # no parent!
             self.obj.intReady.connect(self.readStatus)
             self.obj.moveToThread(self.thread)

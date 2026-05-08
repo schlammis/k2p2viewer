@@ -6,7 +6,7 @@ Created on Sun Mar 24 11:34:34 2024
 """
 import numpy as np
 import os
-import k2tools
+import k2toolsnew as k2tools
 from pathlib import Path
 import configparser
 import datetime
@@ -118,12 +118,12 @@ class MyVelos(MyFiles):
                             zmin=self.zmin,zmax=self.zmax,\
                                 order=self.order,z0=self.z0)
         else:
-            if np.shape(self.sincdata)!=np.shape(self.adata):
-                self.makesinc()
             self.blfit,self.C2,self.NDF,self.fit_pars = \
-                k2tools.FitLikeACanadianOrthoMaster(self.sincdata,\
+                k2tools.FitLikeACanadianOrthoMasterNew(self.adata,\
                             zmin=self.zmin,zmax=self.zmax,\
-                                order=self.order,z0=self.z0)
+                                order=self.order,z0=self.z0,\
+                                maxhars=6,f0=1/self.c.T0,\
+                                tau=self.c.aperSec,mode='atten')
         print(f'[Velo] fitMe done C2={self.C2:.4f} NDF={self.NDF} maxgrp_raw={max(self.blfit[:,2]):.0f}')
         self.maxgrp =int(max(self.blfit[:,2]))
         self.cov=[]
@@ -241,19 +241,17 @@ class MyForces(MyFiles):
 class Mass:
     def __init__(self,Velos,myOns,myOffs,Env,usebl=True,useg=True,\
                  usedens=True,covk=1,excl3=False,dropfirst=0):
-        print(f'[Mass] init: ons={len(myOns.adata)} offs={len(myOffs.adata)} '
-              f'maxGrpMem={Velos.maxGrpMem} dropfirst={dropfirst}')
         self.covk = covk
         self.myEnv = Env
         self.myVelos = Velos
         self.myOns = myOns
         self.myOffs =myOffs
         self.c = self.myVelos.c
+        print(f'[Mass] init: ons={len(myOns.adata)} offs={len(myOffs.adata)} '
+              f'maxGrpMem={Velos.maxGrpMem} dropfirst={dropfirst}')
 
         ix_on = np.where(self.myOns.adata[:,4]<self.myVelos.maxGrpMem)[0]
         print(f'[Mass] ix_on={len(ix_on)} rows selected')
-
-        
         on_t = self.myOns.adata[ix_on,0]
         on_z = self.myOns.adata[ix_on,1]
         bl,_ = self.myVelos.getBlAndUnc(on_t)
@@ -279,8 +277,6 @@ class Mass:
         
         ix_of = np.where(self.myOffs.adata[:,4]<self.myVelos.maxGrpMem)[0]
         print(f'[Mass] ix_of={len(ix_of)} rows selected')
-
-        
         of_t = self.myOffs.adata[ix_of,0]
         of_z = self.myOffs.adata[ix_of,1]
         bl,_ = self.myVelos.getBlAndUnc(of_t)
@@ -311,9 +307,7 @@ class Mass:
             of_d =self.of_d[ofix,:]
             on_d =self.on_d[onix,:]
 
-            beg = dropfirst
-
-            for a1,b,a2 in zip(of_d[beg:-1],on_d[beg:],of_d[beg+1:]):
+            for a1,b,a2 in zip(of_d[:-1],on_d,of_d[1:]):
                 ta1=a1[0]
                 tb=b[0]
                 ta2=a2[0]
@@ -325,14 +319,13 @@ class Mass:
                 z = (1-f)*a1[1]+f*a2[1]
                 row= np.r_[tb,z,val,unc,grp]
                 arow.append(row)
-        self.ofa_d= np.array(arow)
-        print(f'[Mass] ofa_d shape={np.shape(self.ofa_d)}')
+        self.ofa_d = np.array(arow) if arow else np.zeros((0, 5))
         diffs=[]
         for g in range(1+int(np.max(of_grp))):
             ofix = np.where(self.ofa_d[:,4]==g)[0]
             onix = np.where(self.on_d[:,4]==g)[0]
             of_d =self.ofa_d[ofix,:]
-            on_d =self.on_d[onix,:][dropfirst:]
+            on_d =self.on_d[onix,:]
 
             for a,b in zip(of_d,on_d):
                 t = 0.5*(b[0]+a[0])
@@ -348,7 +341,12 @@ class Mass:
                 grp =b[4]
                 diffs.append(np.r_[t,z,di,unc,grp])
 
-        print(f'[Mass] diffs={len(diffs)} excl3={excl3}')
+        if dropfirst > 0:
+            diffs = diffs[dropfirst:]
+        if len(diffs) == 0:
+            raise ValueError(
+                f'No valid mass differences after drop={dropfirst} — '
+                'run has too few measurements for this drop setting')
         if len(diffs)>6 and excl3==True:
             diffs = np.array(diffs)
             try:
@@ -358,9 +356,8 @@ class Mass:
                 self.dif_d=diffs[ix,:]
             except Exception:
                 self.dif_d= np.array(diffs)
-        else:                                
-            self.dif_d= np.array(diffs)      
-        print(f'[Mass] dif_d shape={np.shape(self.dif_d)}')
+        else:
+            self.dif_d= np.array(diffs)
         self.avemass = sum(self.dif_d[:,2]/self.dif_d[:,3]**2)/sum(1/self.dif_d[:,3]**2)
         self.uncmass = 1/np.sqrt(sum(1/self.dif_d[:,3]**2))*self.covk
         self.c2=sum((self.dif_d[:,2]-self.avemass)**2/self.dif_d[:,3]**2)
@@ -388,7 +385,6 @@ class MyConfig:
         
     def setbd0(self,bd0):
         self.bd0=bd0
-        print(f'[Config] reading {os.path.join(bd0,"config.ini")}')
         self.config = configparser.ConfigParser()
         self.config.read(os.path.join(bd0,'config.ini'))
         try:
@@ -422,15 +418,20 @@ class MyConfig:
         self.mydict['Dens']            = self.parse(self.config['Calibration']['MassDensity'],'float')        
         self.mydict['VerticalityDate'] = self.parse(self.config['VelocityMode']['VerticalityDate'],'date')
         self.mydict['SinePeriodSec']   = self.parse(self.config['VelocityMode']['SinePeriodSec'],'float')
+        try:
+            self.mydict['AperSec'] = self.parse(self.config['VelocityMode']['AperSec'],'float')
+        except Exception:
+            self.mydict['AperSec'] = 0.1
 
-        self.title     = self.mydict['Title']       
-        self.R         = self.mydict['R'] 
+        self.title     = self.mydict['Title']
+        self.R         = self.mydict['R']
         self.dens      = self.mydict['Dens']
-        self.Runc      = self.mydict['Runc'] 
-        self.g         = self.mydict['g'] 
-        self.gunc      = self.mydict['gunc'] 
+        self.Runc      = self.mydict['Runc']
+        self.g         = self.mydict['g']
+        self.gunc      = self.mydict['gunc']
         self.Vcal      = self.mydict['ZENER']/self.mydict['DVMREAD']     #multiply all V readings with that
         self.T0        = self.mydict['SinePeriodSec']
+        self.aperSec   = self.mydict['AperSec']
         self.hacconfig = True
     
     def trim(self,inp):
@@ -563,6 +564,7 @@ class k2Set():
             print('[k2Set] calcMass: adata empty, skipping')
             return
         print(f'[k2Set] calcMass excl3={excl3} dropfirst={dropfirst}')
+        self.Mass = 0
         try:
             self.Mass= Mass(self.myVelos,self.myOns,self.myOffs,self.myEnv,\
                             usebl,useg,usedens,covk=self.covk,excl3=excl3,dropfirst=dropfirst)
@@ -652,7 +654,7 @@ class k2Set():
         self.myOns=MyForces(self.c)
         self.myOffs=MyForces(self.c)
         for k in self.allfiles:
-            nmode = self.getftype(k) 
+            nmode = self.getftype(k)
             if nmode==1:
                 if omode==1:
                     self.myVelos.addFn(k,vgrp)
