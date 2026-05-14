@@ -28,6 +28,7 @@ class AppConfig:
         self.use_sinc = False
         self.drop_n = 0
         self.ref_mass = 0.0
+        self.force_scan = False
         self.needs_setup = True
         cfg = configparser.ConfigParser()
         cfg.read(os.path.abspath(_CONFIG_PATH))
@@ -55,6 +56,7 @@ class AppConfig:
                 self.ref_mass = float(g.get('ref_mass', '0'))
             except ValueError:
                 self.ref_mass = 0.0
+            self.force_scan = g.get('force_scan', 'false').lower() == 'true'
             if 'loglevel' not in g:
                 AppConfig.save(self.balance_name, self.datapath, self.loglevel)
 
@@ -131,6 +133,16 @@ class AppConfig:
         cfg.remove_section(name)
         if 'GENERAL' in cfg and cfg['GENERAL'].get('selected balance') == name:
             cfg.remove_option('GENERAL', 'selected balance')
+        with open(os.path.abspath(_CONFIG_PATH), 'w') as f:
+            cfg.write(f)
+
+    @staticmethod
+    def save_force_scan(force_scan):
+        cfg = configparser.ConfigParser()
+        cfg.read(os.path.abspath(_CONFIG_PATH))
+        if 'GENERAL' not in cfg:
+            cfg['GENERAL'] = {}
+        cfg['GENERAL']['force_scan'] = 'true' if force_scan else 'false'
         with open(os.path.abspath(_CONFIG_PATH), 'w') as f:
             cfg.write(f)
 

@@ -158,11 +158,12 @@ class TableLoader(QObject):
     greyRow   = pyqtSignal(str, str, str, str, str)
     finished  = pyqtSignal()
 
-    def __init__(self, bd, balance_name, known_balances):
+    def __init__(self, bd, balance_name, known_balances, force_scan=False):
         super().__init__()
         self.bd = bd
         self.balance_name = balance_name
         self.known_balances = known_balances  # all balance names from config.ini
+        self.force_scan = force_scan
         self._abort = False
 
     def abort(self):
@@ -183,6 +184,7 @@ class TableLoader(QObject):
             ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             with open(os.path.join(run_dir, 'k2readerror.dat'), 'w') as f:
                 f.write(f'k2p2viewer v{APP_VERSION}  {ts}\n')
+                f.write(f'Directory: {run_dir}\n')
                 f.write(f'{reason}\n')
             print(f'[error] wrote k2readerror.dat in {run_dir}: {reason}')
         except Exception as we:
@@ -211,13 +213,17 @@ class TableLoader(QObject):
                         letter = os.path.split(s3)[-1]
                         if len(letter) != 1:
                             continue
-                        if os.path.isfile(os.path.join(s3, 'k2readerror.dat')):
+                        if not self.force_scan and os.path.isfile(os.path.join(s3, 'k2readerror.dat')):
                             continue
                         if not os.path.isfile(os.path.join(s3, 'config.ini')):
                             self._write_run_error(s3, 'No config.ini found in run directory')
                             continue
                         try:
                             c.setbd0(s3)
+                            err_file = os.path.join(s3, 'k2readerror.dat')
+                            if os.path.isfile(err_file):
+                                os.remove(err_file)
+                                print(f'[error] removed stale k2readerror.dat from {s3}')
                             run = yymm + day + letter
                             title = str(c.title)
                             rows = cur.execute(
@@ -231,7 +237,11 @@ class TableLoader(QObject):
                                 mass_str = unc_str = ''
                             self.activeRow.emit(self.balance_name, run, title, mass_str, unc_str)
                         except Exception as e:
-                            self._write_run_error(s3, f'Error reading run: {e}')
+                            self._write_run_error(
+                                s3,
+                                f'Error reading run: {e}\n\n'
+                                f'File: {os.path.join(s3, "config.ini")}\n'
+                                f'{traceback.format_exc()}')
                             print(f'Problem reading {s3}: {e}')
 
             if not self._abort:
@@ -412,6 +422,7 @@ class MainWindow(QMainWindow):
         self.cbExc3sig     = QCheckBox()
         self.cbIgnoreCache = QCheckBox()
         self.cbShowPpm     = QCheckBox()
+        self.cbForceScan   = QCheckBox()
         self.rbDrop0     = QRadioButton('drop 0')
         self.rbDrop1     = QRadioButton('drop 1')
         self.rbDrop2     = QRadioButton('drop 2')
@@ -427,6 +438,7 @@ class MainWindow(QMainWindow):
         self.cbUseSync.setChecked(cfg.use_sinc)
         self.rgDrop.button(max(0, min(2, cfg.drop_n))).setChecked(True)
         self.cbExc3sig.setChecked(True)
+        self.cbForceScan.setChecked(cfg.force_scan)
       
         self.sbMass.setMinimumWidth(100)
         self.sbMass.setMinimum(0)
@@ -560,6 +572,8 @@ class MainWindow(QMainWindow):
         hlayout2.addWidget(self.rbDrop2)
         hlayout2.addWidget(self.cbIgnoreCache)
         hlayout2.addWidget(QLabel('ignore cache'))
+        hlayout2.addWidget(self.cbForceScan)
+        hlayout2.addWidget(QLabel('force scan all'))
 
         hSpacer = QSpacerItem(20, 2, QSizePolicy.Expanding, QSizePolicy.Minimum)
         hlayout2.addItem(hSpacer)
@@ -582,6 +596,8 @@ class MainWindow(QMainWindow):
         self.sbOrder.valueChanged.connect(self._save_ui_settings)
         self.cbUseSync.clicked.connect(self._save_ui_settings)
         self.rgDrop.buttonClicked.connect(self._save_ui_settings)
+        self.cbForceScan.clicked.connect(self._save_force_scan)
+        self.cbForceScan.clicked.connect(self.loadTable)
         
 
     def appendDiag(self, text):
@@ -841,6 +857,9 @@ class MainWindow(QMainWindow):
             self.cbUseSync.isChecked(),
             self._dropN())
 
+    def _save_force_scan(self, *_):
+        AppConfig.save_force_scan(self.cbForceScan.isChecked())
+
     def _prompt_datapath(self):
         if not self.bd:
             msg = 'No balance configured yet.\n\nPlease select its data directory.'
@@ -997,7 +1016,8 @@ class MainWindow(QMainWindow):
 
         self._loading_table = table
         self._set_table_loading(True)
-        self._table_loader = TableLoader(bd, balance, list(balances.keys()))
+        self._table_loader = TableLoader(bd, balance, list(balances.keys()),
+                                         force_scan=self.cbForceScan.isChecked())
         self._table_thread = QThread()
         self._table_loader.moveToThread(self._table_thread)
         self._table_loader.activeRow.connect(self._on_table_active_row)

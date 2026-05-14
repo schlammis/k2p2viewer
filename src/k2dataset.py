@@ -450,8 +450,12 @@ class MyConfig:
         return self.scaletime(start)
             
     def parsedate(self,inp):
-        start=datetime.datetime.strptime(self.trim(inp),'%b %d %Y')
-        return self.scaletime(start)
+        try:
+            start=datetime.datetime.strptime(self.trim(inp),'%b %d %Y')
+            return self.scaletime(start)
+        except ValueError:
+            print(f'[Config] WARNING: cannot parse date "{self.trim(inp)}", using 0')
+            return 0.0
     
     def parse(self,inp,ty):
         if ty.upper()=='STRING':
