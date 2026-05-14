@@ -352,7 +352,8 @@ class Mass:
                 mean,sig= huber(diffs[:,2])
                 ix = np.where(np.abs(diffs[:,2]-mean)<5*sig)[0]
                 self.dif_d=diffs[ix,:]
-            except Exception:
+            except Exception as e:
+                print(f'[Mass] outlier exclusion failed ({e}), keeping all points')
                 self.dif_d= np.array(diffs)
         else:
             self.dif_d= np.array(diffs)
@@ -403,7 +404,10 @@ class MyConfig:
             self.mydict['SerialNo'] = 'not provided'
         self.mydict['StartTime']       = self.parse(self.config['Measurement']['StartTime'],'time')
         self.mydict['Location']        = self.parse(self.config['Measurement']['Location'],'string')
-        self.mydict['Nominal']        = self.parse(self.config['Measurement']['NominalMassGrams'],'float')
+        try:
+            self.mydict['Nominal'] = self.parse(self.config['Measurement']['NominalMassGrams'],'float')
+        except (KeyError, Exception):
+            self.mydict['Nominal'] = None
         self.mydict['R']               = self.parse(self.config['Calibration']['ResOhm'],'float')
         self.mydict['Runc']            = self.parse(self.config['Calibration']['ResUncPpm'],'float')*1e-6*self.mydict['R']
         self.mydict['ResCalDate']      = self.parse(self.config['Calibration']['ResCalDate'],'date')
@@ -475,31 +479,45 @@ class MyEnv():
     def clear(self):
         self.hasEnv=0
         self.edata = []
-        
-    
+        self.env_reason = ''
+        self.env_dropped = 0
+
     def setbd0(self,bd0,guesslen):
         self.bd0=bd0
         self.guesslen = guesslen
+        self.env_dropped = 0
 
-        if self.bd0=='':     
+        if self.bd0=='':
+            self.env_reason = 'no file'
             self.makeFakeEnv()
-            return            
+            return
         if 'PRTData.dat' not in os.listdir(self.bd0):
+            self.env_reason = 'no file'
             self.makeFakeEnv()
             return
         fn =os.path.join(self.bd0,'PRTData.dat')
-        da = np.loadtxt(fn,skiprows=1,usecols=[1,2,3])
+        try:
+            da = np.loadtxt(fn,skiprows=1,usecols=[1,2,3])
+        except Exception as e:
+            print(f'[Env] ERROR loading PRTData.dat: {e}')
+            self.env_reason = 'read error'
+            self.makeFakeEnv()
+            return
         da =np.vstack((np.arange(len(da[:,0])).T*10,da.T)).T
-        ix = np.where(np.logical_and(\
+        total = len(da)
+        ix = np.where(np.logical_and(
             np.logical_and(da[:,1]!=0,(da[:,2]!=0)),(da[:,3]!=0)))[0]
+        self.env_dropped = total - len(ix)
         da = da[ix,:]
         if np.shape(da)[0]==0:
+            self.env_reason = 'all zeros'
             self.makeFakeEnv()
             return
         dens = k2tools.airDensity(da[:,3],da[:,2],da[:,1])
         self.edata = np.vstack((da.T,dens)).T
         if np.shape(self.edata)[0]>0:
             self.hasEnv=1
+            self.env_reason = ''
         #edata #0 = time 1 = humid 2=press 3 =temp
             
     def makeFakeEnv(self):

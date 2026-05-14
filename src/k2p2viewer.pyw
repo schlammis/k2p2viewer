@@ -107,6 +107,7 @@ import k2dataset
 _log('k2dataset OK')
 _splash_msg('Loading tools...')
 import k2toolsnew as k2tools
+import mystat
 _log('k2tools OK')
 _splash_msg('Starting application...')
 
@@ -413,6 +414,7 @@ class MainWindow(QMainWindow):
         self.mplvel      = mplwidget.MplWidget(rightax=True)
         self.mplmass     = mplwidget.MplWidget(rightax=True)
         self.mplprofile  = mplwidget.MplWidget(rightax=True)
+        self.mplallan    = mplwidget.MplWidget()
         
         ### check and spin boxes
         
@@ -461,6 +463,10 @@ class MainWindow(QMainWindow):
         self.laTotUnc  = QLabel("")
         self.lacov     = QLabel("(k={0})".format(kda.covk))
         self.laNoEnv   = QLabel("")
+        self.laNoEnv.setWordWrap(True)
+        self.laDiff    = QLabel("")
+        self.laDiffTot = QLabel("")
+        self.laDiffCov = QLabel("")
 
         
         self.laUa= []
@@ -487,7 +493,7 @@ class MainWindow(QMainWindow):
             'True mass',
             'Assumed density',
             'Conventional mass',
-            'Deviation from nominal',
+            'Deviation from ref.',
             'Total uncertainy',
             'Tolerance (Class 3)',
             'Temperature',
@@ -512,6 +518,8 @@ class MainWindow(QMainWindow):
         self.laMass.setFont(self.foBigBold)
         self.laUnc.setFont(self.foBigBold)
         self.laUncB.setFont(self.foBigBold)
+        self.laDiff.setFont(self.foBigBold)
+        self.laDiffTot.setFont(self.foBigBold)
         
         ### Status bar
 
@@ -694,6 +702,7 @@ class MainWindow(QMainWindow):
         act_rename = menu.addAction('Rename')
         act_delete = menu.addAction('Delete')
         act_chdir  = menu.addAction('Change Directory...')
+        act_copy   = menu.addAction('Copy table to clipboard')
         action = menu.exec_(self.balanceTabs.tabBar().mapToGlobal(pos))
         if action == act_rename:
             self._tab_start_rename(idx)
@@ -701,6 +710,28 @@ class MainWindow(QMainWindow):
             self._tab_delete(idx)
         elif action == act_chdir:
             self._tab_change_directory(idx)
+        elif action == act_copy:
+            self._copy_table_to_clipboard(self._tab_tables[idx])
+
+    def _copy_table_to_clipboard(self, table):
+        cols = table.columnCount()
+        headers = [table.horizontalHeaderItem(c).text() for c in range(cols)]
+        lines = ['\t'.join(headers)]
+        for r in range(table.rowCount()):
+            row = []
+            for c in range(cols):
+                item = table.item(r, c)
+                row.append(item.text() if item else '')
+            lines.append('\t'.join(row))
+        QApplication.clipboard().setText('\n'.join(lines))
+        self.statusBar.showMessage('Table copied to clipboard', 3000)
+
+    def _on_table_context_menu(self, pos):
+        table = self.sender()
+        menu = QMenu(self)
+        act_copy = menu.addAction('Copy table to clipboard')
+        if menu.exec_(table.viewport().mapToGlobal(pos)) == act_copy:
+            self._copy_table_to_clipboard(table)
 
     def _tab_start_rename(self, tab_idx):
         tab_bar = self.balanceTabs.tabBar()
@@ -913,6 +944,8 @@ class MainWindow(QMainWindow):
         t.setSelectionBehavior(QTableWidget.SelectRows)
         t.verticalHeader().setVisible(False)
         t.clicked.connect(self.on_table_clicked)
+        t.setContextMenuPolicy(Qt.CustomContextMenu)
+        t.customContextMenuRequested.connect(self._on_table_context_menu)
         return t
 
     def _build_tabs(self):
@@ -1207,9 +1240,37 @@ class MainWindow(QMainWindow):
         self.laUnc.setText('\u00B1 {0:4.1f} \u00B5g (Type A)'.format(sig*1000))
         self.laUncB.setText('\u00B1 {0:4.1f} \u00B5g (Type B)'.format(sigB*1000))
         if kda.myEnv.hasEnv==2:
-            self.laNoEnv.setText('No Env data available')
+            reason = kda.myEnv.env_reason
+            if reason == 'no file':
+                cause = 'PRTData.dat not found'
+            elif reason == 'all zeros':
+                cause = 'PRTData.dat contains only zeros'
+            elif reason == 'read error':
+                cause = 'PRTData.dat could not be read'
+            else:
+                cause = 'PRT data compromised'
+            self.laNoEnv.setText(
+                f'⚠ {cause} — using standard values'
+                f'\n(T=20 °C, P=999.9 hPa, rH=40 %)')
+            self.laNoEnv.setStyleSheet('color: #C05000;')
+        elif kda.myEnv.env_dropped > 0:
+            self.laNoEnv.setText(
+                f'{kda.myEnv.env_dropped} PRT dropout(s) skipped')
+            self.laNoEnv.setStyleSheet('color: #8B6000;')
         else:
             self.laNoEnv.setText('')
+            self.laNoEnv.setStyleSheet('')
+        ref = self.sbMass.value()
+        if ref != 0:
+            diff_ug = (mean - ref) * 1000
+            self.laDiff.setText('{0:+.1f} \u00B5g'.format(diff_ug))
+            self.laDiffTot.setText('\u00B1 {0:.1f} \u00B5g (comb.)'.format(
+                self.totuncabs))
+            self.laDiffCov.setText('(k={0})'.format(int(kda.covk)))
+        else:
+            self.laDiff.setText('')
+            self.laDiffTot.setText('')
+            self.laDiffCov.setText('')
             
         self.mplmass.canvas.ax1.plot((be,en),\
                         (mean,mean),c='k',linestyle='dashed',lw=2)
@@ -1223,24 +1284,29 @@ class MainWindow(QMainWindow):
       
         self.mplmass.canvas.ax1.plot((be,en),(mean+sigAll,mean+sigAll),\
                                       c='b',linestyle='dashdot')
-        self.mplmass.canvas.ax1.fill_between((be,en), (mean-sigAll,mean-sigAll),\
-                                 (mean+sigAll,mean+sigAll),color='b', alpha=0.2)
-      
-        self.mplmass.canvas.ax1.fill_between((be,en), (mean-sig,mean-sig),\
-                                 (mean+sig,mean+sig),color='r', alpha=0.2)
+        self.mplmass.canvas.ax1.fill_between(
+            (be,en), (mean-sigAll,mean-sigAll), (mean+sigAll,mean+sigAll),
+            color='b', alpha=0.2,
+            label='±{0:.1f} µg overall (k={1})'.format(
+                sigAll*1000, int(kda.covk)))
+        self.mplmass.canvas.ax1.fill_between(
+            (be,en), (mean-sig,mean-sig), (mean+sig,mean+sig),
+            color='r', alpha=0.2,
+            label='±{0:.1f} µg Type A'.format(sig*1000))
+        self.mplmass.canvas.ax1.legend(loc='upper right', fontsize=8,
+                                       framealpha=0.7)
         self.mplmass.canvas.ax1.set_xlim(be,en)
-        if kda.hasRefMass==True:
+        ref = self.sbMass.value()
+        if ref != 0:
              be,en =self.mplmass.canvas.ax1.get_xlim()
              self.mplmass.canvas.ax1.plot((be,en),
-                                          (kda.refMass,kda.refMass),c='m',
+                                          (ref,ref),c='m',
                                           linestyle='dotted',lw=4)
              self.mplmass.canvas.ax1.set_xlim(be,en)
-            
+
         be,en =self.mplmass.canvas.ax1.get_ylim()
 
-        me = mean
-        if kda.hasRefMass:
-            me = kda.refMass
+        me = ref if ref != 0 else mean
         if self.cbShowPpm.isChecked() and me != 0:
             self.mplmass.canvas.bx1.set_ylim((be-me)/me*1e6,(en-me)/me*1e6)
             self.mplmass.canvas.bx1.set_ylabel('deviation  /ppm')
@@ -1272,6 +1338,29 @@ class MainWindow(QMainWindow):
         self.mplprofile.canvas.ax1.set_xlabel('z (mm)')
         self.mplprofile.canvas.draw() 
         
+    def plotAllan(self):
+        self.mplallan.canvas.ax1.clear()
+        if kda.Mass == 0:
+            self.mplallan.canvas.draw()
+            return
+        y = kda.Mass.dif_d[:,2] * 1000.0   # mg → µg
+        N = len(y)
+        if N < 4:
+            self.mplallan.canvas.ax1.set_title('Not enough points for Allan deviation')
+            self.mplallan.canvas.draw()
+            return
+        s, adev, adev_err = mystat.AllanDeviation(y)
+        ax = self.mplallan.canvas.ax1
+        ax.errorbar(s, adev, yerr=adev_err, fmt='b.-', lw=1.5,
+                    capsize=3, label='Allan deviation')
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xlabel('Number of averaged measurements  m')
+        ax.set_ylabel('Allan deviation / µg')
+        ax.legend(fontsize=8)
+        ax.grid(True, which='both', alpha=0.3)
+        self.mplallan.canvas.draw()
+
     def populateUnc(self):
         if kda.Mass==0:
             return
@@ -1327,9 +1416,7 @@ class MainWindow(QMainWindow):
 
     def gotmassval(self,val):
         AppConfig.save_ref_mass(val)
-        if val!=0:
-            kda.setRefMass(val)
-            self.plotMass()
+        self.plotMass()
         
 
 
@@ -1343,6 +1430,13 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.Yes:
             webbrowser.open(download_url)
+
+    _NOMINAL_MASSES_MG = [1, 2, 5, 10, 20, 50, 100, 200, 500,
+                          1000, 2000, 5000, 10000, 20000, 50000]
+
+    def _nearest_nominal(self, mass_mg):
+        return min(self._NOMINAL_MASSES_MG,
+                   key=lambda n: abs(np.log(mass_mg / n)))
 
     def _dropN(self):
         return self.rgDrop.checkedId()
@@ -1422,27 +1516,26 @@ class MainWindow(QMainWindow):
         sheet.write(r,0,now.strftime('%m/%d/%Y'))
         sheet.write(r,1,now.strftime('%H:%M:%S'))
         sheet.write(r,2, ser)
-        nom =kda.c.mydict['Nominal']
-        if nom>=0.995:
+        nom =kda.c.mydict.get('Nominal')
+        if nom is not None:
             sheet.write(r,3, '{0}'.format(nom))
-        else:
-            sheet.write(r,3, '{0}'.format(nom))            
         m =kda.Mass.avemass
         if m>=995:
             sheet.write(r,4, '{0:10.7f}'.format(m/1000))
         else:
             sheet.write(r,4, '{0:10.9f}'.format(m/1000))
-            
+
         conv = self.convmass(m,kda.c.dens)
         sheet.write(r,5, '{0:10.7f}'.format(kda.c.dens/1000))
         if conv>=995:
             sheet.write(r,6, '{0:10.7f}'.format(conv/1000))
         else:
             sheet.write(r,6, '{0:10.9f}'.format(conv/1000))
-        sheet.write(r,7, '{0:8.4f}'.format(conv-nom*1000))
+        if nom is not None:
+            sheet.write(r,7, '{0:8.4f}'.format(conv-nom*1000))
         unc =self.totuncabs
         sheet.write(r,8, '{0:6.4f}'.format(unc/1000))
-        tol = self.getol(nom)            
+        tol = self.getol(nom) if nom is not None else 0
         sheet.write(r,9, '{0:6.4f}'.format(tol/1000))
         if kda.myEnv.hasEnv==2:
             sheet.write(r,10, 'nominal')
@@ -1467,13 +1560,17 @@ class MainWindow(QMainWindow):
             self.populateUnc()
             ser = kda.c.mydict['SerialNo']
             self.laResult[0][1].setText(ser)
-            nom =kda.c.mydict['Nominal']
-            if nom>=0.995:
-                self.laResult[1][1].setText('{0}'.format(nom))
-                self.laResult[1][2].setText('g')
-            else:                
-                self.laResult[1][1].setText('{0}'.format(nom*1000))
-                self.laResult[1][2].setText('mg')
+            nom =kda.c.mydict.get('Nominal')
+            if nom is not None:
+                if nom>=0.995:
+                    self.laResult[1][1].setText('{0}'.format(nom))
+                    self.laResult[1][2].setText('g')
+                else:
+                    self.laResult[1][1].setText('{0}'.format(nom*1000))
+                    self.laResult[1][2].setText('mg')
+            else:
+                self.laResult[1][1].setText('n/a')
+                self.laResult[1][2].setText('')
             m =kda.Mass.avemass
             if m>=995:
                 self.laResult[2][1].setText('{0:10.7f}'.format(m/1000))
@@ -1490,14 +1587,16 @@ class MainWindow(QMainWindow):
             else:
                 self.laResult[4][1].setText('{0:10.4f}'.format(conv))
                 self.laResult[4][2].setText('mg')
-            
-            self.laResult[5][1].setText('{0:8.4f}'.format(conv-nom*1000))
-            self.laResult[5][2].setText('mg')
-               
+            if nom is not None:
+                self.laResult[5][1].setText('{0:8.4f}'.format(conv-nom*1000))
+                self.laResult[5][2].setText('mg')
+            else:
+                self.laResult[5][1].setText('n/a')
+                self.laResult[5][2].setText('')
             unc =self.totuncabs
             self.laResult[6][1].setText('{0:6.4f}'.format(unc/1000))
             self.laResult[6][2].setText('mg')
-            tol = self.getol(nom)            
+            tol = self.getol(nom) if nom is not None else 0
             self.laResult[7][1].setText('{0:6.4f}'.format(tol))
             self.laResult[7][2].setText('mg')
 
@@ -1536,9 +1635,11 @@ class MainWindow(QMainWindow):
         elif tat=='Profile':
             self.plotProfile()
         elif tat=='Uncertainty':
-            self.plotUnc()    
+            self.plotUnc()
         elif tat=='Report':
             self.plotReport()
+        elif tat=='Allan':
+            self.plotAllan()
    
             
     def updateTable(self):
@@ -1592,13 +1693,18 @@ class MainWindow(QMainWindow):
                 self.WriteExcel()
             except Exception:
                 pass
-            ref = self.sbMass.value()
-            if ref != 0 and kda.Mass != 0:
-                if abs(kda.Mass.avemass - ref) / ref > 0.001:
-                    self.sbMass.setValue(0)
-                    AppConfig.save_ref_mass(0)
-                else:
-                    kda.setRefMass(ref)
+            nominal = kda.c.mydict.get('Nominal')
+            if nominal is not None:
+                ref_mg = nominal * 1000.0
+            elif kda.Mass != 0:
+                ref_mg = self._nearest_nominal(kda.Mass.avemass)
+            else:
+                ref_mg = 0.0
+            if ref_mg:
+                self.sbMass.blockSignals(True)
+                self.sbMass.setValue(ref_mg)
+                self.sbMass.blockSignals(False)
+                AppConfig.save_ref_mass(ref_mg)
             self.replot()
             self.idle=True
             return
@@ -1722,12 +1828,16 @@ class MyTabWidget(QWidget):
 
         tabMassctrl.addWidget(l4b)
         tabMassctrl.addWidget(parent.sbMass)
-        tabMassctrl.addWidget(QLabel("Measured Mass:")) 
+        tabMassctrl.addWidget(QLabel("Measured Mass:"))
         tabMassctrl.addWidget(parent.laMass)
         tabMassctrl.addWidget(parent.laUnc)
         tabMassctrl.addWidget(parent.laUncB)
         tabMassctrl.addWidget(parent.lacov)
         tabMassctrl.addWidget(parent.laNoEnv)
+        tabMassctrl.addWidget(QLabel("Difference from reference:"))
+        tabMassctrl.addWidget(parent.laDiff)
+        tabMassctrl.addWidget(parent.laDiffTot)
+        tabMassctrl.addWidget(parent.laDiffCov)
         tabMassctrl.addItem(verticalSpacer)
    
         self.tabMass.layout.addLayout(tabMassctrl)
@@ -1788,6 +1898,12 @@ class MyTabWidget(QWidget):
         self.tabs.addTab(self.tabProfile, "Profile")
         self.tabs.addTab(self.tabUnc, "Uncertainty")
         self.tabs.addTab(self.tabReport, "Report")
+
+        self.tabAllan = QWidget()
+        allanLayout = QVBoxLayout()
+        allanLayout.addWidget(parent.mplallan)
+        self.tabAllan.setLayout(allanLayout)
+        self.tabs.addTab(self.tabAllan, "Allan")
 
         self.tabDiag = QWidget()
         self.diagText = QPlainTextEdit()
