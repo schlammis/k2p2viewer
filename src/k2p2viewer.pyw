@@ -261,6 +261,14 @@ class TableLoader(QObject):
             conn.close()
 
 
+def _safeFitMe(order, usesinc):
+    try:
+        kda.myVelos.fitMe(order=order, usesinc=usesinc)
+    except Exception as e:
+        print(f'[k2Set] fitMe FAILED: {e}')
+        print(traceback.format_exc())
+
+
 class Worker(QObject):
     finished = pyqtSignal()
     intReady = pyqtSignal(int,int,int)
@@ -290,7 +298,7 @@ class Worker(QObject):
                 kda.myOns.readGrp(k)
                 kda.myOffs.readGrp(k)
                 if k>=1 and k%Npl==0:
-                    kda.myVelos.fitMe(order=self.order,usesinc=self.usesinc)
+                    _safeFitMe(self.order,self.usesinc)
                     kda.myOns.aveForce()
                     kda.myOffs.aveForce()
                 if k>=1 and k%Npl==0:
@@ -298,7 +306,7 @@ class Worker(QObject):
                 if k>Npl:
                     self.intReady.emit(1,k+1,maxgrp+1)
             _save_run_cache(cache_path)
-        kda.myVelos.fitMe(order=self.order,usesinc=self.usesinc)
+        _safeFitMe(self.order,self.usesinc)
         kda.myOns.aveForce()
         kda.myOffs.aveForce()
         kda.calcMass(excl3=self.excl3,dropfirst=self.dropfirst)

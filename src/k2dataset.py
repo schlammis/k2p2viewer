@@ -65,6 +65,10 @@ class MyVelos(MyFiles):
         z2 = data[:,3]
         v = data[:,5]
         V = data[:,6]*Vmul*self.c.Vcal
+        if np.ptp(t1)==0 and np.ptp(t2)==0:
+            print(f'[Velo] WARNING grp={grp} {os.path.basename(fi)}: '
+                  f'timestamps are constant (corrupt/incomplete scan) - skipping file')
+            return
         S = np.ones(len(data[:,5]))*self.sco
         G = np.ones(len(data[:,5]))*grp
         self.sco+=1
@@ -250,7 +254,7 @@ class Mass:
         print(f'[Mass] init: ons={len(myOns.adata)} offs={len(myOffs.adata)} '
               f'maxGrpMem={Velos.maxGrpMem} dropfirst={dropfirst}')
 
-        ix_on = np.where(self.myOns.adata[:,4]<self.myVelos.maxGrpMem)[0]
+        ix_on = np.where(self.myOns.adata[:,4]<=self.myVelos.maxGrpMem)[0]
         print(f'[Mass] ix_on={len(ix_on)} rows selected')
         on_t = self.myOns.adata[ix_on,0]
         on_z = self.myOns.adata[ix_on,1]
@@ -275,7 +279,7 @@ class Mass:
 
         self.on_d = np.c_[on_t,on_z,on_F,on_Func,on_grp]
         
-        ix_of = np.where(self.myOffs.adata[:,4]<self.myVelos.maxGrpMem)[0]
+        ix_of = np.where(self.myOffs.adata[:,4]<=self.myVelos.maxGrpMem)[0]
         print(f'[Mass] ix_of={len(ix_of)} rows selected')
         of_t = self.myOffs.adata[ix_of,0]
         of_z = self.myOffs.adata[ix_of,1]
