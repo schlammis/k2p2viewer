@@ -636,7 +636,7 @@ class k2Set():
                     u.append(os.path.join(bd2,i))
             tbeg=datetime.datetime.strptime(la[0].split('_')[0],'%Y%m%d%H%M%S')
             tend=datetime.datetime.strptime(la[-1].split('_')[0],'%Y%m%d%H%M%S')
-            self.guesslen = (tbeg-tend).total_seconds()
+            self.guesslen = (tend-tbeg).total_seconds()
             return [str(i) for i in u]
         elif self.ver>=1:
             all=[os.path.join(bd1,i) for i in os.listdir(bd1)] + [os.path.join(bd2,i) for i in os.listdir(bd2)]
