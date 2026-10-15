@@ -7,8 +7,11 @@ _logpath = os.path.join(_appdir,'k2viewer_startup.log')
 _logfile = open(_logpath,'w',buffering=1)
 
 def _log(msg):
-    _logfile.write(msg+'\n')
-    _logfile.flush()
+    try:
+        _logfile.write(msg+'\n')
+        _logfile.flush()
+    except ValueError:
+        pass  # startup log already closed
 
 _log('=== k2viewer startup ===')
 _log(f'python   : {sys.version}')
@@ -52,6 +55,7 @@ from PyQt5.QtCore import (
     QTranslator,
     QMutex,
     QObject,
+    QProcess,
     QThread,
     QTimer,
     pyqtSignal,
@@ -152,14 +156,25 @@ class DiagStream(QObject):
             line, self._buf = self._buf.split('\n', 1)
             if line:
                 ts = datetime.datetime.now().strftime('%y%m%d %H%M%S')
-                _runtimelog.write(f'{ts} {line}\n')
-                _runtimelog.flush()
-                self.newText.emit(line)
+                try:
+                    _runtimelog.write(f'{ts} {line}\n')
+                    _runtimelog.flush()
+                except ValueError:
+                    pass  # log already closed during shutdown
+                self._emit(line)
 
     def flush(self):
         if self._buf.strip():
-            self.newText.emit(self._buf)
+            self._emit(self._buf)
             self._buf = ''
+
+    def _emit(self, text):
+        # During shutdown the Qt side may already be deleted while worker
+        # threads still print; never let that turn into an exception.
+        try:
+            self.newText.emit(text)
+        except RuntimeError:
+            pass
 
 
 class TableLoader(QObject):
@@ -646,16 +661,37 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             self._restart_app()
 
+    def _stop_table_loader(self):
+        if self._table_thread and self._table_thread.isRunning():
+            self._table_loader.abort()
+            self._table_thread.quit()
+            self._table_thread.wait()
+
+    def closeEvent(self, event):
+        self._stop_table_loader()
+        super().closeEvent(event)
+
     def _restart_app(self):
-        import subprocess
+        if not self.idle:
+            # the run worker cannot be interrupted; language is already saved
+            self.statusBar.showMessage(tr('Wait until run is loaded'), 5000)
+            return
+        self._stop_table_loader()
         if getattr(sys, 'frozen', False):
             cmd = [sys.executable] + sys.argv[1:]
             # let the new PyInstaller process unpack its own environment
             os.environ['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
         else:
-            cmd = [sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:]
+            # prefer pythonw.exe so no console window pops up
+            pyw = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+            exe = pyw if os.path.isfile(pyw) else sys.executable
+            cmd = [exe, os.path.abspath(sys.argv[0])] + sys.argv[1:]
         print(f'restarting: {cmd}')
-        subprocess.Popen(cmd, cwd=os.getcwd())
+        # QProcess.startDetached instead of subprocess: a debugger (VS Code /
+        # debugpy) hooks subprocess and kills the child when the session ends.
+        if not QProcess.startDetached(cmd[0], cmd[1:], os.getcwd())[0]:
+            print('restart failed — please restart k2p2viewer manually')
+            return
         QApplication.quit()
 
     def appendDiag(self, text):
