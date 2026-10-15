@@ -29,6 +29,7 @@ class AppConfig:
         self.drop_n = 0
         self.ref_mass = 0.0
         self.force_scan = False
+        self.language = 'en'
         self.needs_setup = True
         cfg = configparser.ConfigParser()
         cfg.read(os.path.abspath(_CONFIG_PATH))
@@ -57,6 +58,7 @@ class AppConfig:
             except ValueError:
                 self.ref_mass = 0.0
             self.force_scan = g.get('force_scan', 'false').lower() == 'true'
+            self.language = g.get('language', 'en').lower()
             if 'loglevel' not in g:
                 AppConfig.save(self.balance_name, self.datapath, self.loglevel)
 
@@ -143,6 +145,16 @@ class AppConfig:
         if 'GENERAL' not in cfg:
             cfg['GENERAL'] = {}
         cfg['GENERAL']['force_scan'] = 'true' if force_scan else 'false'
+        with open(os.path.abspath(_CONFIG_PATH), 'w') as f:
+            cfg.write(f)
+
+    @staticmethod
+    def save_language(language):
+        cfg = configparser.ConfigParser()
+        cfg.read(os.path.abspath(_CONFIG_PATH))
+        if 'GENERAL' not in cfg:
+            cfg['GENERAL'] = {}
+        cfg['GENERAL']['language'] = language
         with open(os.path.abspath(_CONFIG_PATH), 'w') as f:
             cfg.write(f)
 

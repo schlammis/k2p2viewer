@@ -24,6 +24,10 @@ try:
 except Exception as e:
     _log(f'import appconfig FAILED: {e}')
     raise
+import lang
+from lang import tr
+lang.set_language(AppConfig().language)
+_log(f'language : {lang.get_language()}')
 import threading
 import traceback
 import ctypes
@@ -42,7 +46,10 @@ _log('stdlib imports OK')
 #
 from PyQt5.QtCore import (
     Qt,
+    QLibraryInfo,
+    QLocale,
     QSize,
+    QTranslator,
     QMutex,
     QObject,
     QThread,
@@ -55,6 +62,7 @@ from PyQt5.QtWidgets import (
     QApplication,
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QLabel,
     QMainWindow,
     QPushButton,
@@ -83,7 +91,7 @@ from PyQt5.QtWidgets import (
 )
 try:
     import pyi_splash  # type: ignore
-    pyi_splash.update_text('Loading interface...')
+    pyi_splash.update_text(tr('Loading interface...'))
     try:
         pyi_splash._SPLASH_SCREEN.tk.attributes('-topmost', False)
     except Exception:
@@ -98,18 +106,18 @@ def _splash_msg(msg):
 
 import mplwidget
 _log('mplwidget OK')
-_splash_msg('Loading numpy...')
+_splash_msg(tr('Loading numpy...'))
 import numpy as np
 import time
 import sqlite3
-_splash_msg('Loading dataset...')
+_splash_msg(tr('Loading dataset...'))
 import k2dataset
 _log('k2dataset OK')
-_splash_msg('Loading tools...')
+_splash_msg(tr('Loading tools...'))
 import k2toolsnew as k2tools
 import mystat
 _log('k2tools OK')
-_splash_msg('Starting application...')
+_splash_msg(tr('Starting application...'))
 
 def _read_version():
     for candidate in [_appdir, os.path.join(_appdir, '..')]:
@@ -232,8 +240,8 @@ class TableLoader(QObject):
                                 (run, self.balance_name)).fetchall()
                             if rows:
                                 val, unc = rows[0]
-                                mass_str = '{0:,.4f}'.format(val) if val > -9e96 else 'n/a'
-                                unc_str  = '{0:6.4f}'.format(unc) if unc > -9e96 else 'n/a'
+                                mass_str = '{0:,.4f}'.format(val) if val > -9e96 else tr('n/a')
+                                unc_str  = '{0:6.4f}'.format(unc) if unc > -9e96 else tr('n/a')
                             else:
                                 mass_str = unc_str = ''
                             self.activeRow.emit(self.balance_name, run, title, mass_str, unc_str)
@@ -254,8 +262,8 @@ class TableLoader(QObject):
                             f"WHERE balance IN ({placeholders}) ORDER BY run DESC", other).fetchall():
                         if self._abort:
                             return
-                        mass_str = '{0:,.4f}'.format(val) if val > -9e96 else 'n/a'
-                        unc_str  = '{0:6.4f}'.format(unc) if unc > -9e96 else 'n/a'
+                        mass_str = '{0:,.4f}'.format(val) if val > -9e96 else tr('n/a')
+                        unc_str  = '{0:6.4f}'.format(unc) if unc > -9e96 else tr('n/a')
                         self.greyRow.emit(bal, run, title or '', mass_str, unc_str)
         finally:
             conn.close()
@@ -396,7 +404,7 @@ class MainWindow(QMainWindow):
 
         self.thread = QThread()
         title_balance = f"  [{self.balance_name}]" if self.balance_name else ""
-        self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}{title_balance}")
+        self.setWindowTitle(f"{tr('Kibb-g2 Viewer')}  v{APP_VERSION}{title_balance}")
         self.setMinimumSize(QSize(1300, 600))
         
         self._tab_balances = []
@@ -413,7 +421,7 @@ class MainWindow(QMainWindow):
         self.balanceTabs.tabBar().tabBarClicked.connect(self._on_tab_bar_clicked)
         self._build_tabs()
 
-        self.Brefresh = QPushButton("Reload")
+        self.Brefresh = QPushButton(tr("Reload"))
         
         ### The plot windows
         
@@ -433,9 +441,9 @@ class MainWindow(QMainWindow):
         self.cbIgnoreCache = QCheckBox()
         self.cbShowPpm     = QCheckBox()
         self.cbForceScan   = QCheckBox()
-        self.rbDrop0     = QRadioButton('drop 0')
-        self.rbDrop1     = QRadioButton('drop 1')
-        self.rbDrop2     = QRadioButton('drop 2')
+        self.rbDrop0     = QRadioButton(tr('drop 0'))
+        self.rbDrop1     = QRadioButton(tr('drop 1'))
+        self.rbDrop2     = QRadioButton(tr('drop 2'))
         self.rgDrop      = QButtonGroup()
         self.rgDrop.addButton(self.rbDrop0, 0)
         self.rgDrop.addButton(self.rbDrop1, 1)
@@ -461,9 +469,9 @@ class MainWindow(QMainWindow):
         
         ### global labels
         
-        self.sblabel  = QLabel("Click on a run") 
+        self.sblabel  = QLabel(tr("Click on a run")) 
         self.lares    = QLabel("") 
-        self.laUncTot = QLabel("n/a")
+        self.laUncTot = QLabel(tr("n/a"))
         self.laMass   = QLabel("")
         self.laUnc    = QLabel("")
         self.laUncB    = QLabel("")
@@ -502,7 +510,7 @@ class MainWindow(QMainWindow):
             'Assumed density',
             'Conventional mass',
             'Deviation from ref.',
-            'Total uncertainy',
+            'Total uncertainty',
             'Tolerance (Class 3)',
             'Temperature',
             'Barometric pressure',
@@ -514,7 +522,7 @@ class MainWindow(QMainWindow):
             row=[]
             for j in range(3):
                 if j==0:
-                    la =QLabel(i)
+                    la =QLabel(tr(i))
                 else:
                     la=QLabel('')
                     la.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -547,7 +555,7 @@ class MainWindow(QMainWindow):
         
         
         
-        self.statusBar.showMessage('Welcome to k2viewer',5000)
+        self.statusBar.showMessage(tr('Welcome to k2viewer'),5000)
 
         self.diagStream = DiagStream()
         self.diagStream.newText.connect(self.appendDiag)
@@ -579,20 +587,27 @@ class MainWindow(QMainWindow):
         vlayout1.addWidget(self.balanceTabs)
         vlayout1.addWidget(self.Brefresh)
 
-        hlayout2.addWidget(QLabel("order"))
+        hlayout2.addWidget(QLabel(tr("order")))
         hlayout2.addWidget(self.sbOrder)
         hlayout2.addWidget(self.cbUseSync)
-        hlayout2.addWidget(QLabel('use sinc'))
+        hlayout2.addWidget(QLabel(tr('use sinc')))
         hlayout2.addWidget(self.rbDrop0)
         hlayout2.addWidget(self.rbDrop1)
         hlayout2.addWidget(self.rbDrop2)
         hlayout2.addWidget(self.cbIgnoreCache)
-        hlayout2.addWidget(QLabel('ignore cache'))
+        hlayout2.addWidget(QLabel(tr('ignore cache')))
         hlayout2.addWidget(self.cbForceScan)
-        hlayout2.addWidget(QLabel('force scan all'))
+        hlayout2.addWidget(QLabel(tr('force scan all')))
 
         hSpacer = QSpacerItem(20, 2, QSizePolicy.Expanding, QSizePolicy.Minimum)
         hlayout2.addItem(hSpacer)
+
+        self.cbLanguage = QComboBox()
+        for code, name in lang.LANGUAGES.items():
+            self.cbLanguage.addItem(name, code)
+        self.cbLanguage.setCurrentIndex(self.cbLanguage.findData(lang.get_language()))
+        hlayout2.addWidget(QLabel(tr('Language')))
+        hlayout2.addWidget(self.cbLanguage)
      
         self.setCentralWidget(widget)
         self._update_sblabel()
@@ -614,7 +629,34 @@ class MainWindow(QMainWindow):
         self.rgDrop.buttonClicked.connect(self._save_ui_settings)
         self.cbForceScan.clicked.connect(self._save_force_scan)
         self.cbForceScan.clicked.connect(self.loadTable)
+        self.cbLanguage.currentIndexChanged.connect(self._on_language_changed)
         
+
+    def _on_language_changed(self, index):
+        code = self.cbLanguage.itemData(index)
+        AppConfig.save_language(code)
+        # Labels are built once at startup, so the change takes effect on restart.
+        # The question itself is shown in the newly selected language.
+        prev = lang.get_language()
+        lang.set_language(code)
+        title, msg = tr('Language changed'), tr('Restart k2p2viewer now to apply the new language?')
+        lang.set_language(prev)
+        reply = QMessageBox.question(self, title, msg,
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if reply == QMessageBox.Yes:
+            self._restart_app()
+
+    def _restart_app(self):
+        import subprocess
+        if getattr(sys, 'frozen', False):
+            cmd = [sys.executable] + sys.argv[1:]
+            # let the new PyInstaller process unpack its own environment
+            os.environ['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+        else:
+            cmd = [sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:]
+        print(f'restarting: {cmd}')
+        subprocess.Popen(cmd, cwd=os.getcwd())
+        QApplication.quit()
 
     def appendDiag(self, text):
         self.tabWidget.diagText.appendPlainText(text)
@@ -707,10 +749,10 @@ class MainWindow(QMainWindow):
         if idx < 0 or idx >= len(self._tab_balances):
             return
         menu = QMenu(self)
-        act_rename = menu.addAction('Rename')
-        act_delete = menu.addAction('Delete')
-        act_chdir  = menu.addAction('Change Directory...')
-        act_copy   = menu.addAction('Copy table to clipboard')
+        act_rename = menu.addAction(tr('Rename'))
+        act_delete = menu.addAction(tr('Delete'))
+        act_chdir  = menu.addAction(tr('Change Directory...'))
+        act_copy   = menu.addAction(tr('Copy table to clipboard'))
         action = menu.exec_(self.balanceTabs.tabBar().mapToGlobal(pos))
         if action == act_rename:
             self._tab_start_rename(idx)
@@ -732,12 +774,12 @@ class MainWindow(QMainWindow):
                 row.append(item.text() if item else '')
             lines.append('\t'.join(row))
         QApplication.clipboard().setText('\n'.join(lines))
-        self.statusBar.showMessage('Table copied to clipboard', 3000)
+        self.statusBar.showMessage(tr('Table copied to clipboard'), 3000)
 
     def _on_table_context_menu(self, pos):
         table = self.sender()
         menu = QMenu(self)
-        act_copy = menu.addAction('Copy table to clipboard')
+        act_copy = menu.addAction(tr('Copy table to clipboard'))
         if menu.exec_(table.viewport().mapToGlobal(pos)) == act_copy:
             self._copy_table_to_clipboard(table)
 
@@ -762,10 +804,10 @@ class MainWindow(QMainWindow):
             if not new_name or new_name == old_name:
                 return
             if '[' in new_name or ']' in new_name:
-                QMessageBox.warning(self, 'Invalid name', 'Balance name may not contain [ or ] characters.')
+                QMessageBox.warning(self, tr('Invalid name'), tr('Balance name may not contain [ or ] characters.'))
                 return
             if new_name in self._tab_balances:
-                QMessageBox.warning(self, 'Already exists', f'A balance named "{new_name}" already exists.')
+                QMessageBox.warning(self, tr('Already exists'), tr('A balance named "{0}" already exists.').format(new_name))
                 return
             AppConfig.rename_balance(old_name, new_name)
             if os.path.isfile('k2viewer.db'):
@@ -780,7 +822,7 @@ class MainWindow(QMainWindow):
                 self._populated.add(new_name)
             if self.balance_name == old_name:
                 self.balance_name = new_name
-                self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}  [{new_name}]")
+                self.setWindowTitle(f"{tr('Kibb-g2 Viewer')}  v{APP_VERSION}  [{new_name}]")
             self._populated.discard(new_name)
             if self.balanceTabs.currentIndex() == tab_idx:
                 self._start_table_load(tab_idx)
@@ -795,9 +837,9 @@ class MainWindow(QMainWindow):
     def _tab_delete(self, tab_idx):
         name = self._tab_balances[tab_idx]
         reply = QMessageBox.warning(
-            self, 'Confirm Delete',
-            f'Delete balance "{name}"?\n\nThis will remove it from the config and '
-            f'delete all its database entries. This cannot be undone.',
+            self, tr('Confirm Delete'),
+            tr('Delete balance "{0}"?\n\nThis will remove it from the config and '
+               'delete all its database entries. This cannot be undone.').format(name),
             QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
         if reply != QMessageBox.Yes:
             return
@@ -817,7 +859,7 @@ class MainWindow(QMainWindow):
             self.balanceTabs.blockSignals(False)
             self.balance_name = ''
             self.bd = ''
-            self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}")
+            self.setWindowTitle(f"{tr('Kibb-g2 Viewer')}  v{APP_VERSION}")
             self._update_sblabel()
             return
         new_idx = min(max(0, tab_idx - 1), len(self._tab_balances) - 1)
@@ -828,7 +870,7 @@ class MainWindow(QMainWindow):
         new_bd = AppConfig.get_all_balances().get(new_balance, '')
         self.balance_name = new_balance
         self.bd = new_bd
-        self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}  [{new_balance}]")
+        self.setWindowTitle(f"{tr('Kibb-g2 Viewer')}  v{APP_VERSION}  [{new_balance}]")
         AppConfig.save(new_balance, new_bd, AppConfig().loglevel)
         if new_balance not in self._populated:
             self._start_table_load(new_idx)
@@ -839,7 +881,7 @@ class MainWindow(QMainWindow):
         current_path = balances.get(name, '')
         start = current_path if os.path.isdir(current_path) else os.path.expanduser('~')
         path = QFileDialog.getExistingDirectory(
-            self, f'Select new data directory for "{name}"', start)
+            self, tr('Select new data directory for "{0}"').format(name), start)
         if not path:
             return
         path = self._find_dataroot(path)
@@ -853,7 +895,7 @@ class MainWindow(QMainWindow):
 
     def _menu_add_balance(self):
         start = self.bd if os.path.isdir(self.bd) else os.path.expanduser('~')
-        path = QFileDialog.getExistingDirectory(self, 'Select data directory for new balance', start)
+        path = QFileDialog.getExistingDirectory(self, tr('Select data directory for new balance'), start)
         if not path:
             return
         path = self._find_dataroot(path)
@@ -861,20 +903,20 @@ class MainWindow(QMainWindow):
         hint = ('...' + path[-40:]) if len(path) > 40 else path
         existing = AppConfig.get_all_balances()
         while True:
-            name, ok = QInputDialog.getText(self, 'Add Balance',
-                                            f'Data path: {hint}\n\nEnter a name for this balance\n(no [ or ] characters allowed):',
+            name, ok = QInputDialog.getText(self, tr('Add Balance'),
+                                            tr('Data path: {0}\n\nEnter a name for this balance\n(no [ or ] characters allowed):').format(hint),
                                             text='Balance1')
             if not ok:
                 return
             name = name.strip()
             if not name:
-                QMessageBox.warning(self, 'Invalid name', 'Balance name cannot be empty.')
+                QMessageBox.warning(self, tr('Invalid name'), tr('Balance name cannot be empty.'))
                 continue
             if '[' in name or ']' in name:
-                QMessageBox.warning(self, 'Invalid name', 'Balance name may not contain [ or ] characters.')
+                QMessageBox.warning(self, tr('Invalid name'), tr('Balance name may not contain [ or ] characters.'))
                 continue
             if name in existing:
-                QMessageBox.warning(self, 'Already exists', f'A balance named "{name}" already exists.')
+                QMessageBox.warning(self, tr('Already exists'), tr('A balance named "{0}" already exists.').format(name))
                 continue
             break
 
@@ -886,7 +928,7 @@ class MainWindow(QMainWindow):
         self._last_tab_index = new_idx
         self.balance_name = name
         self.bd = path
-        self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}  [{name}]")
+        self.setWindowTitle(f"{tr('Kibb-g2 Viewer')}  v{APP_VERSION}  [{name}]")
         self._start_table_load(new_idx)
         self._update_sblabel()
 
@@ -901,14 +943,14 @@ class MainWindow(QMainWindow):
 
     def _prompt_datapath(self):
         if not self.bd:
-            msg = 'No balance configured yet.\n\nPlease select its data directory.'
+            msg = tr('No balance configured yet.\n\nPlease select its data directory.')
         else:
-            msg = (f'The configured data path does not exist:\n\n{self.bd}\n\n'
-                   'Please select the data directory.')
-        QMessageBox.information(self, 'Balance setup', msg)
+            msg = tr('The configured data path does not exist:\n\n{0}\n\n'
+                     'Please select the data directory.').format(self.bd)
+        QMessageBox.information(self, tr('Balance setup'), msg)
 
         start = self.bd if os.path.isdir(self.bd) else os.path.expanduser('~')
-        path = QFileDialog.getExistingDirectory(self, 'Select data directory', start)
+        path = QFileDialog.getExistingDirectory(self, tr('Select data directory'), start)
         if not path:
             return
         path = self._find_dataroot(path)
@@ -916,20 +958,20 @@ class MainWindow(QMainWindow):
         hint = ('...' + path[-40:]) if len(path) > 40 else path
         existing = AppConfig.get_all_balances()
         while True:
-            name, ok = QInputDialog.getText(self, 'Balance name',
-                                            f'Data path: {hint}\n\nEnter a name for this balance\n(no [ or ] characters allowed):',
+            name, ok = QInputDialog.getText(self, tr('Balance name'),
+                                            tr('Data path: {0}\n\nEnter a name for this balance\n(no [ or ] characters allowed):').format(hint),
                                             text=self.balance_name or 'Balance1')
             if not ok:
                 return
             name = name.strip()
             if not name:
-                QMessageBox.warning(self, 'Invalid name', 'Balance name cannot be empty.')
+                QMessageBox.warning(self, tr('Invalid name'), tr('Balance name cannot be empty.'))
                 continue
             if '[' in name or ']' in name:
-                QMessageBox.warning(self, 'Invalid name', 'Balance name may not contain [ or ] characters.')
+                QMessageBox.warning(self, tr('Invalid name'), tr('Balance name may not contain [ or ] characters.'))
                 continue
             if name in existing and name != self.balance_name:
-                QMessageBox.warning(self, 'Already exists', f'A balance named "{name}" already exists.')
+                QMessageBox.warning(self, tr('Already exists'), tr('A balance named "{0}" already exists.').format(name))
                 continue
             break
 
@@ -940,10 +982,10 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ tabs --
     def _make_table(self):
         t = QTableWidget(0, 4)
-        t.setHorizontalHeaderItem(0, QTableWidgetItem("run"))
-        t.setHorizontalHeaderItem(1, QTableWidgetItem("title"))
-        t.setHorizontalHeaderItem(2, QTableWidgetItem("mass/mg"))
-        t.setHorizontalHeaderItem(3, QTableWidgetItem("unc/ug"))
+        t.setHorizontalHeaderItem(0, QTableWidgetItem(tr("run")))
+        t.setHorizontalHeaderItem(1, QTableWidgetItem(tr("title")))
+        t.setHorizontalHeaderItem(2, QTableWidgetItem(tr("mass/mg")))
+        t.setHorizontalHeaderItem(3, QTableWidgetItem(tr("unc/ug")))
         t.setColumnWidth(0, 80)
         t.setColumnWidth(2, 80)
         t.setColumnWidth(3, 80)
@@ -994,18 +1036,18 @@ class MainWindow(QMainWindow):
     def _check_busy(self):
         """Return True and show a status message if any background task is running."""
         if self._table_loading:
-            self.statusBar.showMessage('Wait until table is populated', 3000)
+            self.statusBar.showMessage(tr('Wait until table is populated'), 3000)
             return True
         if not self.idle:
-            self.statusBar.showMessage('Wait until run is loaded', 3000)
+            self.statusBar.showMessage(tr('Wait until run is loaded'), 3000)
             return True
         return False
 
     def _update_sblabel(self):
         if self._tab_balances:
-            self.sblabel.setText('Click on a run')
+            self.sblabel.setText(tr('Click on a run'))
         else:
-            self.sblabel.setText('Click on + to add a balance with data directory')
+            self.sblabel.setText(tr('Click on + to add a balance with data directory'))
 
     def _on_tab_bar_clicked(self, index):
         if self._check_busy():
@@ -1026,7 +1068,7 @@ class MainWindow(QMainWindow):
         balances = AppConfig.get_all_balances()
         self.balance_name = balance
         self.bd = balances.get(balance, '')
-        self.setWindowTitle(f"Kibb-g2 Viewer  v{APP_VERSION}  [{balance}]")
+        self.setWindowTitle(f"{tr('Kibb-g2 Viewer')}  v{APP_VERSION}  [{balance}]")
         AppConfig.save(balance, self.bd, AppConfig().loglevel)
         if balance not in self._populated:
             self._start_table_load(index)
@@ -1039,7 +1081,7 @@ class MainWindow(QMainWindow):
         balances = AppConfig.get_all_balances()
         bd = balances.get(balance, '')
         if not bd or not os.path.isdir(bd):
-            self.statusBar.showMessage(f'Data path not configured for {balance}', 4000)
+            self.statusBar.showMessage(tr('Data path not configured for {0}').format(balance), 4000)
             return
 
         table = self._tab_tables[tab_index]
@@ -1171,10 +1213,10 @@ class MainWindow(QMainWindow):
         self.mplenv.canvas.ax2.tick_params(axis='x',direction='inout')
         self.mplenv.canvas.ax3.tick_params(axis='x',direction='inout')
         self.mplenv.canvas.ax4.tick_params(axis='x',direction='inout')
-        self.mplenv.canvas.ax1.set_ylabel('rel. humid (%)')
-        self.mplenv.canvas.ax2.set_ylabel('press. (hPa)')
-        self.mplenv.canvas.ax3.set_ylabel('temp (degC)')
-        self.mplenv.canvas.ax4.set_ylabel('air dens. (kg/m^3)')
+        self.mplenv.canvas.ax1.set_ylabel(tr('rel. humid (%)'))
+        self.mplenv.canvas.ax2.set_ylabel(tr('press. (hPa)'))
+        self.mplenv.canvas.ax3.set_ylabel(tr('temp (degC)'))
+        self.mplenv.canvas.ax4.set_ylabel(tr('air dens. (kg/m^3)'))
         self.mplenv.canvas.ax2.set_xlabel(tla)  
         self.mplenv.canvas.ax4.set_xlabel(tla)  
         self.mplenv.canvas.draw() 
@@ -1216,7 +1258,7 @@ class MainWindow(QMainWindow):
         self.mplvel.canvas.bx1.set_ylim((be/me-1)*1e6,(en/me-1)*1e6)
         self.mplvel.canvas.ax1.set_xlabel(tla)    
         self.mplvel.canvas.ax1.set_ylabel('Bl/Tm')
-        self.mplvel.canvas.bx1.set_ylabel('rel. change /ppm')
+        self.mplvel.canvas.bx1.set_ylabel(tr('rel. change /ppm'))
         self.mplvel.canvas.draw() 
 
     def plotMass(self):
@@ -1245,25 +1287,25 @@ class MainWindow(QMainWindow):
         sigB = self.totuncB/1000
         sigAll = self.totuncabs/1000
         self.laMass.setText('{0:8.4f} mg'.format(mean))
-        self.laUnc.setText('\u00B1 {0:4.1f} \u00B5g (Type A)'.format(sig*1000))
-        self.laUncB.setText('\u00B1 {0:4.1f} \u00B5g (Type B)'.format(sigB*1000))
+        self.laUnc.setText(tr('\u00B1 {0:4.1f} \u00B5g (Type A)').format(sig*1000))
+        self.laUncB.setText(tr('\u00B1 {0:4.1f} \u00B5g (Type B)').format(sigB*1000))
         if kda.myEnv.hasEnv==2:
             reason = kda.myEnv.env_reason
             if reason == 'no file':
-                cause = 'PRTData.dat not found'
+                cause = tr('PRTData.dat not found')
             elif reason == 'all zeros':
-                cause = 'PRTData.dat contains only zeros'
+                cause = tr('PRTData.dat contains only zeros')
             elif reason == 'read error':
-                cause = 'PRTData.dat could not be read'
+                cause = tr('PRTData.dat could not be read')
             else:
-                cause = 'PRT data compromised'
+                cause = tr('PRT data compromised')
             self.laNoEnv.setText(
-                f'⚠ {cause} — using standard values'
-                f'\n(T=20 °C, P=999.9 hPa, rH=40 %)')
+                tr('\u26A0 {0} \u2014 using standard values'
+                   '\n(T=20 \u00B0C, P=999.9 hPa, rH=40 %)').format(cause))
             self.laNoEnv.setStyleSheet('color: #C05000;')
         elif kda.myEnv.env_dropped > 0:
             self.laNoEnv.setText(
-                f'{kda.myEnv.env_dropped} PRT dropout(s) skipped')
+                tr('{0} PRT dropout(s) skipped').format(kda.myEnv.env_dropped))
             self.laNoEnv.setStyleSheet('color: #8B6000;')
         else:
             self.laNoEnv.setText('')
@@ -1295,12 +1337,12 @@ class MainWindow(QMainWindow):
         self.mplmass.canvas.ax1.fill_between(
             (be,en), (mean-sigAll,mean-sigAll), (mean+sigAll,mean+sigAll),
             color='b', alpha=0.2,
-            label='±{0:.1f} µg overall (k={1})'.format(
+            label=tr('\u00B1{0:.1f} \u00B5g overall (k={1})').format(
                 sigAll*1000, int(kda.covk)))
         self.mplmass.canvas.ax1.fill_between(
             (be,en), (mean-sig,mean-sig), (mean+sig,mean+sig),
             color='r', alpha=0.2,
-            label='±{0:.1f} µg Type A'.format(sig*1000))
+            label=tr('\u00B1{0:.1f} \u00B5g Type A').format(sig*1000))
         self.mplmass.canvas.ax1.legend(loc='upper right', fontsize=8,
                                        framealpha=0.7)
         self.mplmass.canvas.ax1.set_xlim(be,en)
@@ -1317,12 +1359,12 @@ class MainWindow(QMainWindow):
         me = ref if ref != 0 else mean
         if self.cbShowPpm.isChecked() and me != 0:
             self.mplmass.canvas.bx1.set_ylim((be-me)/me*1e6,(en-me)/me*1e6)
-            self.mplmass.canvas.bx1.set_ylabel('deviation  /ppm')
+            self.mplmass.canvas.bx1.set_ylabel(tr('deviation  /ppm'))
         else:
             self.mplmass.canvas.bx1.set_ylim((be-me)*1e3,(en-me)*1e3)
-            self.mplmass.canvas.bx1.set_ylabel('deviation  /\u00B5g')
+            self.mplmass.canvas.bx1.set_ylabel(tr('deviation  /\u00B5g'))
         self.mplmass.canvas.ax1.set_xlabel(tla)
-        self.mplmass.canvas.ax1.set_ylabel('mass /mg')
+        self.mplmass.canvas.ax1.set_ylabel(tr('mass /mg'))
         self.mplmass.canvas.bx1.ticklabel_format(useOffset=False)
         self.mplmass.canvas.ax1.ticklabel_format(useOffset=False)
         self.mplmass.canvas.draw() 
@@ -1342,7 +1384,7 @@ class MainWindow(QMainWindow):
         me =0.5*(be+en)
         self.mplprofile.canvas.bx1.set_ylim((be/me-1)*1e6,(en/me-1)*1e6)
         self.mplprofile.canvas.ax1.set_ylabel('Bl (Tm)')
-        self.mplprofile.canvas.bx1.set_ylabel('rel. change /ppm')
+        self.mplprofile.canvas.bx1.set_ylabel(tr('rel. change /ppm'))
         self.mplprofile.canvas.ax1.set_xlabel('z (mm)')
         self.mplprofile.canvas.draw() 
         
@@ -1354,17 +1396,17 @@ class MainWindow(QMainWindow):
         y = kda.Mass.dif_d[:,2] * 1000.0   # mg → µg
         N = len(y)
         if N < 4:
-            self.mplallan.canvas.ax1.set_title('Not enough points for Allan deviation')
+            self.mplallan.canvas.ax1.set_title(tr('Not enough points for Allan deviation'))
             self.mplallan.canvas.draw()
             return
         s, adev, adev_err = mystat.AllanDeviation(y)
         ax = self.mplallan.canvas.ax1
         ax.errorbar(s, adev, yerr=adev_err, fmt='b.-', lw=1.5,
-                    capsize=3, label='Allan deviation')
+                    capsize=3, label=tr('Allan deviation'))
         ax.set_xscale('log')
         ax.set_yscale('log')
-        ax.set_xlabel('Number of averaged measurements  m')
-        ax.set_ylabel('Allan deviation / µg')
+        ax.set_xlabel(tr('Number of averaged measurements  m'))
+        ax.set_ylabel(tr('Allan deviation / \u00B5g'))
         ax.legend(fontsize=8)
         ax.grid(True, which='both', alpha=0.3)
         self.mplallan.canvas.draw()
@@ -1403,7 +1445,7 @@ class MainWindow(QMainWindow):
             else:
                 prow=row
                 row=row+1
-            self.laUa[prow][0].setText('{0:14}'.format(cat))
+            self.laUa[prow][0].setText('{0:14}'.format(tr(cat)))
             self.laUa[prow][1].setText('{0:4.1f} ppm'.format(rel*kda.covk))
             self.laUa[prow][2].setText('{0:6.1f} \u00B5g'.format(rel*1e-3*mean*kda.covk))
             if cat=='Total':
@@ -1432,8 +1474,8 @@ class MainWindow(QMainWindow):
         import webbrowser
         reply = QMessageBox.question(
             self,
-            "Update available",
-            f"A new version is available: v{latest}\nYou have: v{APP_VERSION}\n\nOpen the download page?",
+            tr("Update available"),
+            tr("A new version is available: v{0}\nYou have: v{1}\n\nOpen the download page?").format(latest, APP_VERSION),
             QMessageBox.Yes | QMessageBox.No
         )
         if reply == QMessageBox.Yes:
@@ -1481,17 +1523,17 @@ class MainWindow(QMainWindow):
 
         sheet1 = book.add_sheet("Sheet 1")
 
-        sheet1.write(0,  0, "Serial Number")
-        sheet1.write(0,  1, "Designated Weight")
-        sheet1.write(0,  2, "True Mass")
-        sheet1.write(0,  3, "Assumed Dens.")
-        sheet1.write(0,  4, "Conv. Mass")
-        sheet1.write(0,  5, "Dev. from Nom.")
-        sheet1.write(0,  6, "Total Unc.")
-        sheet1.write(0,  7, "Tolerance")
-        sheet1.write(0,  8, "Temp.")
-        sheet1.write(0 , 9, "Press.")
-        sheet1.write(0, 10, "Humid.")
+        sheet1.write(0,  0, tr("Serial Number"))
+        sheet1.write(0,  1, tr("Designated Weight"))
+        sheet1.write(0,  2, tr("True Mass"))
+        sheet1.write(0,  3, tr("Assumed Dens."))
+        sheet1.write(0,  4, tr("Conv. Mass"))
+        sheet1.write(0,  5, tr("Dev. from Nom."))
+        sheet1.write(0,  6, tr("Total Unc."))
+        sheet1.write(0,  7, tr("Tolerance"))
+        sheet1.write(0,  8, tr("Temp."))
+        sheet1.write(0 , 9, tr("Press."))
+        sheet1.write(0, 10, tr("Humid."))
 
         sheet1.write(1,  0, "")
         sheet1.write(1,  1, "")
@@ -1577,7 +1619,7 @@ class MainWindow(QMainWindow):
                     self.laResult[1][1].setText('{0}'.format(nom*1000))
                     self.laResult[1][2].setText('mg')
             else:
-                self.laResult[1][1].setText('n/a')
+                self.laResult[1][1].setText(tr('n/a'))
                 self.laResult[1][2].setText('')
             m =kda.Mass.avemass
             if m>=995:
@@ -1599,7 +1641,7 @@ class MainWindow(QMainWindow):
                 self.laResult[5][1].setText('{0:8.4f}'.format(conv-nom*1000))
                 self.laResult[5][2].setText('mg')
             else:
-                self.laResult[5][1].setText('n/a')
+                self.laResult[5][1].setText(tr('n/a'))
                 self.laResult[5][2].setText('')
             unc =self.totuncabs
             self.laResult[6][1].setText('{0:6.4f}'.format(unc/1000))
@@ -1609,7 +1651,7 @@ class MainWindow(QMainWindow):
             self.laResult[7][2].setText('mg')
 
             if kda.myEnv.hasEnv==2:
-                suf=' (n/a)'
+                suf=tr(' (n/a)')
             else:
                 suf=''
             
@@ -1630,23 +1672,23 @@ class MainWindow(QMainWindow):
 
 
     def replot(self):
-        currentIndex=self.tabWidget.tabs.currentIndex()
-        tat = self.tabWidget.tabs.tabText(currentIndex)
-        if tat=='Force':
+        tw = self.tabWidget
+        tab = tw.tabs.currentWidget()
+        if tab is tw.tabForce:
             self.plotForce()
-        elif tat=='Environmentals':
+        elif tab is tw.tabEnv:
             self.plotEnv()
-        elif tat=='Velocity':
+        elif tab is tw.tabVelo:
             self.plotVelocity()
-        elif tat=='Mass':
+        elif tab is tw.tabMass:
             self.plotMass()
-        elif tat=='Profile':
+        elif tab is tw.tabProfile:
             self.plotProfile()
-        elif tat=='Uncertainty':
+        elif tab is tw.tabUnc:
             self.plotUnc()
-        elif tat=='Report':
+        elif tab is tw.tabReport:
             self.plotReport()
-        elif tat=='Allan':
+        elif tab is tw.tabAllan:
             self.plotAllan()
    
             
@@ -1684,16 +1726,16 @@ class MainWindow(QMainWindow):
             return
         elif ix==1:
             self.progressBar.setValue(int(100*cur/tot))
-            self.sblabel.setText('reading {0} sets'.format(tot))
+            self.sblabel.setText(tr('reading {0} sets').format(tot))
         elif ix==2:
             self.progressBar.setValue(0)
-            self.sblabel.setText('reading Environmentals')
+            self.sblabel.setText(tr('reading Environmentals'))
         elif ix==3:
             self.progressBar.setValue(0)
-            self.sblabel.setText('Loading from cache...')
+            self.sblabel.setText(tr('Loading from cache...'))
         elif ix==99:
-            self.sblabel.setText('reading of {0} done'.format(kda.bd0))
-            self.statusBar.showMessage('Data available',5000)
+            self.sblabel.setText(tr('reading of {0} done').format(kda.bd0))
+            self.statusBar.showMessage(tr('Data available'),5000)
             self.progressBar.setValue(0)
             self.populateUnc()
             self.updateTable()
@@ -1724,7 +1766,7 @@ class MainWindow(QMainWindow):
 
     def on_table_clicked(self, item):
         if self._table_loading:
-            self.statusBar.showMessage('Wait until table is populated', 3000)
+            self.statusBar.showMessage(tr('Wait until table is populated'), 3000)
             return
         t = self._current_table()
         if t is None:
@@ -1751,7 +1793,7 @@ class MainWindow(QMainWindow):
             self.thread.started.connect(self.obj.procCounter)
             self.thread.start()
         else:
-            self.statusBar.showMessage('Wait till last run is processed',5000)
+            self.statusBar.showMessage(tr('Wait till last run is processed'),5000)
          
 class MyTabWidget(QWidget): 
     def __init__(self, parent): 
@@ -1773,10 +1815,10 @@ class MyTabWidget(QWidget):
         self.tabForce.layout = QHBoxLayout()
         tab1ctrl = QVBoxLayout()
         l1 = QLabel() 
-        l1.setText("Forcemode") 
+        l1.setText(tr("Forcemode")) 
         h1 = QHBoxLayout()
         l2 = QLabel() 
-        l2.setText("show voltage")
+        l2.setText(tr("show voltage"))
         h1.addWidget(l2)
         h1.addWidget(parent.cbShowVolt)   
         verticalSpacer = QSpacerItem(20, 40, 
@@ -1801,7 +1843,7 @@ class MyTabWidget(QWidget):
         self.tabVelo.layout = QHBoxLayout()
         tabVeloctrl = QVBoxLayout()
         l1 = QLabel() 
-        l1.setText("Velocitymode") 
+        l1.setText(tr("Velocitymode")) 
         h1 = QHBoxLayout()      
         verticalSpacer = QSpacerItem(20, 40, 
                                      QSizePolicy.Minimum, 
@@ -1817,32 +1859,32 @@ class MyTabWidget(QWidget):
         self.tabMass.layout = QHBoxLayout()
         tabMassctrl = QVBoxLayout()
         l4b = QLabel() 
-        l4b.setText("ref. mass (mg):")    
+        l4b.setText(tr("ref. mass (mg):"))    
         verticalSpacer = QSpacerItem(20, 40, 
                                      QSizePolicy.Minimum, 
                                      QSizePolicy.Expanding)
         l4a = QLabel() 
-        l4a.setText("mass")
+        l4a.setText(tr("mass"))
         h1 = QHBoxLayout()
 
         h1.addWidget(parent.cbExc3sig)
-        h1.addWidget(QLabel('Excl. outlier'))
+        h1.addWidget(QLabel(tr('Excl. outlier')))
         h2 = QHBoxLayout()
         h2.addWidget(parent.cbShowPpm)
-        h2.addWidget(QLabel('show ppm'))
+        h2.addWidget(QLabel(tr('show ppm')))
         tabMassctrl.addWidget(l4a)
         tabMassctrl.addLayout(h1)
         tabMassctrl.addLayout(h2) 
 
         tabMassctrl.addWidget(l4b)
         tabMassctrl.addWidget(parent.sbMass)
-        tabMassctrl.addWidget(QLabel("Measured Mass:"))
+        tabMassctrl.addWidget(QLabel(tr("Measured Mass:")))
         tabMassctrl.addWidget(parent.laMass)
         tabMassctrl.addWidget(parent.laUnc)
         tabMassctrl.addWidget(parent.laUncB)
         tabMassctrl.addWidget(parent.lacov)
         tabMassctrl.addWidget(parent.laNoEnv)
-        tabMassctrl.addWidget(QLabel("Difference from reference:"))
+        tabMassctrl.addWidget(QLabel(tr("Difference from reference:")))
         tabMassctrl.addWidget(parent.laDiff)
         tabMassctrl.addWidget(parent.laDiffTot)
         tabMassctrl.addWidget(parent.laDiffCov)
@@ -1857,14 +1899,14 @@ class MyTabWidget(QWidget):
         
         self.tabUnc.layout.setColumnStretch(parent.laUaMaxRows+1, parent.laUaMaxCols)
   
-        la10 = QLabel('Item')
-        la11 = QLabel('rel. unc.')
-        la12 = QLabel('uncertainty')
+        la10 = QLabel(tr('Item'))
+        la11 = QLabel(tr('rel. unc.'))
+        la12 = QLabel(tr('uncertainty'))
         la10.setFont(parent.foBig)
         la11.setFont(parent.foBig)
         la12.setFont(parent.foBig)
  
-        la00 = QLabel('measured mass')
+        la00 = QLabel(tr('measured mass'))
         la00.setFont(parent.foBigBold)
         parent.laMass2.setFont(parent.foBigBold)
         parent.laTotUnc.setFont(parent.foBigBold)
@@ -1899,19 +1941,19 @@ class MyTabWidget(QWidget):
         # Add tabs to widget 
         self.layout.addWidget(self.tabs) 
         self.setLayout(self.layout) 
-        self.tabs.addTab(self.tabMass, "Mass")
-        self.tabs.addTab(self.tabForce, "Force")
-        self.tabs.addTab(self.tabEnv, "Environmentals")
-        self.tabs.addTab(self.tabVelo, "Velocity")
-        self.tabs.addTab(self.tabProfile, "Profile")
-        self.tabs.addTab(self.tabUnc, "Uncertainty")
-        self.tabs.addTab(self.tabReport, "Report")
+        self.tabs.addTab(self.tabMass, tr("Mass"))
+        self.tabs.addTab(self.tabForce, tr("Force"))
+        self.tabs.addTab(self.tabEnv, tr("Environmentals"))
+        self.tabs.addTab(self.tabVelo, tr("Velocity"))
+        self.tabs.addTab(self.tabProfile, tr("Profile"))
+        self.tabs.addTab(self.tabUnc, tr("Uncertainty"))
+        self.tabs.addTab(self.tabReport, tr("Report"))
 
         self.tabAllan = QWidget()
         allanLayout = QVBoxLayout()
         allanLayout.addWidget(parent.mplallan)
         self.tabAllan.setLayout(allanLayout)
-        self.tabs.addTab(self.tabAllan, "Allan")
+        self.tabs.addTab(self.tabAllan, tr("Allan"))
 
         self.tabDiag = QWidget()
         self.diagText = QPlainTextEdit()
@@ -1919,7 +1961,7 @@ class MyTabWidget(QWidget):
         diagLayout = QVBoxLayout()
         diagLayout.addWidget(self.diagText)
         self.tabDiag.setLayout(diagLayout)
-        self.tabs.addTab(self.tabDiag, "Diagnostics")
+        self.tabs.addTab(self.tabDiag, tr("Diagnostics"))
 
 
 
@@ -1947,6 +1989,12 @@ try:
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     _log('creating QApplication')
     app = QApplication(sys.argv)
+    if lang.get_language() != 'en':
+        _qt_translator = QTranslator()
+        # QLocale lookup tries e.g. qtbase_pt_BR then qtbase_pt
+        if _qt_translator.load(QLocale(lang.get_language()), 'qtbase', '_',
+                               QLibraryInfo.location(QLibraryInfo.TranslationsPath)):
+            app.installTranslator(_qt_translator)
     app.setFont(QFont('Segoe UI', 10))
     app.setStyleSheet("""
         QMainWindow, QWidget {
